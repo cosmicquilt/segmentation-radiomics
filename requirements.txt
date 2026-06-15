@@ -1,0 +1,20 @@
+# Python 3.10/3.11 recommended. The NumPy core (segmentation metrics, radiomics-lite,
+# correlation, QC, threshold baseline) needs only the first two lines; the rest enable
+# the learned segmenter and canonical radiomics.
+numpy>=1.23
+pyyaml>=6.0
+
+# learned segmentation (MONAI / nnU-Net)
+torch>=2.0
+monai>=1.3
+nibabel>=5.0          # NIfTI I/O for MSD / TCIA volumes
+SimpleITK>=2.3        # DICOM / NRRD I/O
+
+# canonical radiomics + stats + viz
+pyradiomics>=3.1      # note: can be finicky to build; radiomics-lite is the fallback
+scikit-learn>=1.2
+pandas>=2.0
+matplotlib>=3.6
+
+# tests
+pytest>=7.0

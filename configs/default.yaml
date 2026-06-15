@@ -1,0 +1,20 @@
+# default config synthetic cohort threshold baseline radiomics-lite
+# run python -m seg_radiomics.cli run --config configs/default.yaml
+seed: 0
+
+data:
+  source: synthetic        # synthetic | lidc (real malignancy labels see download_data.md)
+  n: 40
+  shape: [40, 56, 56]
+  spacing: [1.0, 1.0, 1.0]  # mm per voxel real ct is anisotropic e.g. [2.5, 0.7, 0.7]
+
+segmentation:
+  method: threshold        # threshold (runs now) | monai_unet (stub see segmentation/model.py)
+  threshold: -400.0        # hu nodules are denser than lung parenchyma
+  keep_largest: true
+
+features:
+  extractor: lite          # lite (runs now) | pyradiomics (stub)
+
+output:
+  dir: results/synthetic

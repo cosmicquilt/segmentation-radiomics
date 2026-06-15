@@ -1,0 +1,25 @@
+# lidc-idri real nodule masks + radiologist malignancy ratings
+# requires pylidc and ~/.pylidcrc pointing at the extracted dicoms
+# (see scripts/download_data.md) grab a subset of scans not the full 133gb
+#   python -m seg_radiomics.cli run --config configs/lidc.yaml
+seed: 0
+
+data:
+  source: lidc
+  limit: 60                 # number of scans to load (subset)
+  clevel: 0.5               # radiologist-consensus level
+  pad: 2
+  malignant_threshold: 3    # median malignancy > 3 -> malignant (1-5 scale 3 = indeterminate)
+  exclude_indeterminate: false
+
+segmentation:
+  method: threshold         # baseline swap for monai_unet (segmentation/model.py)
+  threshold: -400.0
+  keep_largest: true
+
+features:
+  extractor: lite           # lite | pyradiomics
+  use_gt_mask: true         # features from gt consensus mask -> honest feature<->malignancy correlation
+
+output:
+  dir: results/lidc
