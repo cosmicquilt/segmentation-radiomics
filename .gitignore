@@ -11,10 +11,10 @@ __pycache__/
 venv/
 env/
 
-# data & artifacts (never commit clinical imaging data)
-data/
-lidc/
-results/
+# data & artifacts (root-level only, so src/seg_radiomics/data stays tracked)
+/data/
+/lidc/
+/results/
 *.pt
 *.h5
 *.nii
