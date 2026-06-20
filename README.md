@@ -31,8 +31,9 @@ orchestration:
 | stage | runs today (baseline) | production upgrade |
 |-------|----------------------|--------------------|
 | segmentation | hu threshold + largest component | **monai / nnu-net** 3d u-net, dice loss (`segmentation/model.py`) |
-| features | radiomics-lite (shape + first-order, numpy) | **pyradiomics** full texture families (glcm/glrlm/glszm) |
-| reproducibility | icc / ccc under +/-1 voxel erode/dilate | **real inter-observer** spread (lidc has 4 radiologist masks/nodule) |
+| features | radiomics-lite (shape + first-order, numpy) | **pyradiomics** texture families (glcm/glrlm/glszm), fixed 25 hu bin width, ibsi-compliant |
+| reproducibility | icc(2,1) under +/-1 voxel erode/dilate, raw + parenchyma-floored | **real inter-observer** spread (lidc's 4 radiologist masks/nodule), stochastic contour perturbation |
+| confound checks | spearman vs roi volume (size-proxy flag) | + small-nodule icc stratification, combat cross-batch harmonization |
 | correlation | per-feature pearson r + roc auc | same, on a real label (malignancy / survival) |
 | qc | empty / leakage / fragmentation checks | same |
 
@@ -46,6 +47,14 @@ replaces the synthetic erode/dilate proxy with the genuine thing. `configs/lidc.
 extracts the correlation features from the gt consensus mask so the biomarker
 correlation isn't contaminated by segmentation error. then stop, no radiogenomics
 (that's scope creep). see `scripts/download_data.md`.
+
+the lidc step also picks up the methods upgrades a radiomics review flagged: pyradiomics
+texture families (glcm/glrlm) under the 4-rater variance, a **fixed 25 hu bin width** (not
+a fixed bin count, so a gray level means the same thing across patients) for ibsi
+compliance, a stochastic contour perturbation alongside the deterministic erode/dilate,
+icc stratified by nodule size (a one-voxel shift erases more of a 4 mm nodule than a 30 mm
+one), and combat / nested-combat as the cross-scanner harmonization step once features
+span acquisition batches.
 
 ## quickstart
 
@@ -78,8 +87,9 @@ earns its keep.
 
 **1. feature reproducibility under +/-1 voxel segmentation perturbation.** each mask is
 eroded and dilated by one voxel (an inter-observer-boundary proxy), features are
-re-extracted from all three masks, and each feature gets an icc(2,1) + lin's ccc across
-the three segmentations. the features split sharply:
+re-extracted from all three masks, and each feature gets an icc(2,1) across the three
+segmentations (two-way random, absolute agreement, the form that generalizes to unseen
+raters; lin's ccc is reported alongside as a cross-check). raw, the features split sharply:
 
 | feature | family | ICC | reproducible? |
 |---|---|---|---|
@@ -92,31 +102,56 @@ the three segmentations. the features split sharply:
 | firstorder_Mean / Entropy / StdDev / Minimum | first-order | ~0.00 | **no** |
 
 the mechanism is real and lung-ct-specific: a +1 voxel dilation leaks into -800 hu lung
-air, which dominates the sum/mean-based first-order features (energy, mean, entropy, std)
-but barely touches the *upper* percentiles (90th, max) or the shape features. this is
-precisely why tight, consistent segmentation matters in lung-nodule radiomics. the
-*magnitude* here is stark by construction (the synthetic air contrast is extreme), the
-*ranking* of which features survive is the transferable result, and lidc's four
-radiologist masks per nodule turn this +/-1 voxel proxy into a real inter-observer
-measurement (build plan).
+air, which dominates the sum/mean-based first-order features (energy squares every voxel,
+so one rim of -800 hu air swamps it) but barely touches the *upper* percentiles (90th,
+max, anchored by the dense core) or the shape features.
 
-**2. feature vs label correlation.** per-feature association with the synthetic
-malignancy-like label:
+**2. the leakage is fixable, not intrinsic.** the instability above is a
+segmentation-contamination artifact, so rerunning the exact same analysis after a -300 hu
+floor (standard lung-ct parenchyma exclusion: drop every voxel below -300 hu inside the
+mask, removing the air a dilation leaked into) recovers it almost completely:
 
-| feature | pearson r | auc |
-|---|---|---|
-| shape_EquivalentDiameter | +0.77 | 0.93 |
-| shape_SurfaceArea | +0.75 | 0.93 |
-| shape_VoxelVolume | +0.74 | 0.93 |
-| shape_Sphericity | -0.73 | 0.10 |
-| firstorder_Energy | +0.72 | **0.99** |
+| family | median ICC raw | median ICC floored | % ICC > 0.85 (raw -> floored) |
+|---|---|---|---|
+| all 12 | 0.39 | 0.95 | 33% -> 92% |
+| shape | 0.84 | 0.94 | 50% -> 100% |
+| first-order | 0.01 | 0.97 | 25% -> 88% |
 
-**the two tables together are the whole point.** firstorder_Energy is the single best
-label separator (auc 0.99) *and* the least reproducible feature (icc 0.005): correlation
-alone would crown it the biomarker, the reproducibility analysis says don't trust it
-without a tight segmentation. a feature has to win *both* tables to be a real biomarker,
-which is exactly the upstream->downstream stability question project 1 asked of
-reconstruction, asked here of segmentation.
+every collapsed first-order feature comes back above 0.85 (energy 0.005 -> 0.95, mean
+0.03 -> 1.00, std 0.00 -> 0.85). this is the actionable half: the pipeline doesn't just
+flag unstable features, it shows a one-line preprocessing fix that restores them (the
+floor is `features.hu_floor` in the config).
+
+**3. feature vs label correlation, and the volume confound.** per-feature association with
+the synthetic malignancy-like label, plus each feature's spearman correlation with roi
+volume (a feature that is "predictive" only because it restates lesion size is not a
+biomarker):
+
+| feature | pearson r | auc | spearman w/ volume |
+|---|---|---|---|
+| shape_EquivalentDiameter | +0.77 | 0.93 | +1.00 (definitional) |
+| shape_SurfaceArea | +0.75 | 0.93 | +1.00 (definitional) |
+| shape_Sphericity | -0.73 | 0.10 | -0.98 (definitional) |
+| firstorder_Energy | +0.72 | **0.99** | **+0.83 (size proxy)** |
+
+shape features correlate with volume *by construction*, so the flag only bites for
+intensity features, and exactly one trips it: firstorder_Energy.
+
+**the three analyses together are the whole point.** firstorder_Energy is the single best
+label separator (auc 0.99), and it fails for two independent reasons the correlation table
+alone would never surface: its predictivity is largely a size proxy (spearman 0.83 with
+volume), and its raw reproducibility is the worst of any feature (icc 0.005) until the
+parenchyma floor rescues it. a feature has to clear all three bars (associated, not a mere
+size proxy, reproducible) to be a real biomarker, which is exactly the upstream->downstream
+stability question project 1 asked of reconstruction, asked here of segmentation.
+
+**honest about the proxy.** the +/-1 voxel erode/dilate is a deterministic stand-in for
+stochastic inter-observer variability, so the shape-feature ICCs partly reflect grid
+geometry (a uniform dilation changes volume by a fixed function) rather than reader
+disagreement. the real measurement is lidc's four independent radiologist contours per
+nodule (build plan), which the same icc(2,1) code consumes directly. icc is reported per
+feature, not as a single family average, because the families are bimodal (the first-order
+split above would otherwise vanish into a meaningless "moderate" mean).
 
 ## quality control (first-class, `qc.py`)
 
@@ -138,8 +173,8 @@ src/seg_radiomics/
 ├── seg_metrics.py      # dice, iou, confusion, sensitivity/precision
 ├── morphology.py       # numpy erosion / surface / connected components
 ├── features.py         # radiomics-lite (pyradiomics-compatible names)
-├── correlation.py      # pearson r + rank-based auc (no scipy/sklearn needed)
-├── reproducibility.py  # feature icc / ccc under +/-1 voxel mask perturbation
+├── correlation.py      # pearson r + auc + spearman volume-confound check
+├── reproducibility.py  # feature icc(2,1) under mask perturbation, raw + parenchyma-floored
 ├── qc.py               # case-level quality control + report
 ├── pipeline.py         # cohort -> qc -> segment -> metrics -> features -> correlate
 ├── cli.py

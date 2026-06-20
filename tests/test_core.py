@@ -126,3 +126,30 @@ def test_feature_reproducibility_structure_and_ranking():
     # than shape (the documented finding), a characterization test on fixed seed
     by = {r["feature"]: r["icc"] for r in rows}
     assert by["shape_SurfaceArea"] > by["firstorder_Mean"]
+
+
+def test_spearman_captures_monotonic():
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    y = x ** 3  # monotonic but nonlinear, spearman = 1 while pearson < 1
+    assert correlation.spearman(x, y) == pytest.approx(1.0, abs=1e-9)
+    assert correlation.pearson(x, y) < 1.0
+
+
+def test_volume_confound_flags_size_proxy():
+    table = {
+        "shape_VoxelVolume": [10.0, 20.0, 30.0, 40.0, 50.0],
+        "size_proxy": [11.0, 21.0, 29.0, 41.0, 50.0],  # tracks volume
+        "independent": [5.0, 1.0, 4.0, 2.0, 3.0],       # unrelated ordering
+    }
+    vc = correlation.volume_confound(table, flag_threshold=0.7)
+    assert vc["size_proxy"]["volume_proxy"]
+    assert not vc["independent"]["volume_proxy"]
+
+
+def test_hu_floor_recovers_first_order_reproducibility():
+    cohort = make_cohort(n=12, shape=(32, 40, 40), seed=2)
+    raw = {r["feature"]: r["icc"] for r in reproducibility.feature_reproducibility(cohort, use_gt=True)}
+    flo = {r["feature"]: r["icc"]
+           for r in reproducibility.feature_reproducibility(cohort, use_gt=True, hu_floor=-300.0)}
+    # raw, the dilation leaks into -800 hu air and collapses the mean; the floor rescues it
+    assert raw["firstorder_Mean"] < 0.5 and flo["firstorder_Mean"] > 0.85

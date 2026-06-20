@@ -73,6 +73,36 @@ def correlate_features(feature_table: dict[str, list], labels: list) -> dict:
     return dict(sorted(out.items(), key=lambda kv: kv[1]["abs_r"], reverse=True))
 
 
+def spearman(x: np.ndarray, y: np.ndarray) -> float:
+    """spearman rank correlation (pearson on average ranks, tie-aware)"""
+    x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    return pearson(_average_ranks(x), _average_ranks(y))
+
+
+def volume_confound(feature_table: dict[str, list], volume_key: str = "shape_VoxelVolume",
+                    flag_threshold: float = 0.7) -> dict:
+    """per-feature spearman with roi volume, flags features that are size proxies
+
+    a feature whose predictive power is mostly a restatement of lesion size is not a
+    novel biomarker. energy (sum of squared intensities) scales with voxel count, so it
+    tends to flag here, which is exactly why its high auc has to be discounted
+    """
+    if volume_key not in feature_table:
+        return {}
+    vol = np.asarray(feature_table[volume_key], dtype=np.float64)
+    out = {}
+    for name, values in feature_table.items():
+        if name == volume_key:
+            continue
+        v = np.asarray(values, dtype=np.float64)
+        ok = np.isfinite(v) & np.isfinite(vol)
+        if ok.sum() < 3:
+            continue
+        rho = spearman(v[ok], vol[ok])
+        out[name] = {"spearman_vol": rho, "abs": abs(rho), "volume_proxy": bool(abs(rho) >= flag_threshold)}
+    return dict(sorted(out.items(), key=lambda kv: kv[1]["abs"], reverse=True))
+
+
 def features_to_table(feature_dicts: list[dict]) -> dict[str, list]:
     """transpose a list of per-subject feature dicts into a column table"""
     if not feature_dicts:

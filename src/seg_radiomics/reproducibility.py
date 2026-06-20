@@ -66,11 +66,16 @@ def icc_2_1(data: np.ndarray) -> float:
     return float((ms_rows - ms_err) / denom) if abs(denom) > 1e-12 else float("nan")
 
 
-def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_voxels=8):
+def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_voxels=8, hu_floor=None):
     """per-feature icc / ccc across {reference, eroded, dilated} masks
 
     the reference mask is the ground truth (use_gt) or the prediction. cases whose mask
-    erodes away below min_voxels are skipped so the ratios stay defined
+    erodes away below min_voxels are skipped so the ratios stay defined.
+
+    hu_floor (when set) intersects every mask with image >= hu_floor before extraction, a
+    parenchyma-exclusion step that drops the air voxels a dilation leaked into. this is the
+    computational fix for the boundary-leakage failure mode: run with and without it to
+    show how much first-order stability the floor recovers
     """
     triples: list[tuple[dict, dict, dict]] = []
     for case in cohort:
@@ -78,12 +83,18 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
         ero, dil = erode(ref), dilate(ref)
         if ref.sum() < min_voxels or ero.sum() < min_voxels:
             continue
+        img = case["image"]
+        if hu_floor is not None:
+            keep = np.asarray(img) >= hu_floor
+            ref, ero, dil = ref & keep, ero & keep, dil & keep
+            if ref.sum() < min_voxels or ero.sum() < min_voxels:
+                continue
         sp = tuple(case.get("spacing", spacing))
         try:
             triples.append((
-                extract_features(case["image"], ref, sp),
-                extract_features(case["image"], ero, sp),
-                extract_features(case["image"], dil, sp),
+                extract_features(img, ref, sp),
+                extract_features(img, ero, sp),
+                extract_features(img, dil, sp),
             ))
         except ValueError:
             continue

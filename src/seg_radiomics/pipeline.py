@@ -19,7 +19,7 @@ import logging
 import numpy as np
 
 from . import qc as _qc
-from .correlation import correlate_features, features_to_table
+from .correlation import correlate_features, features_to_table, volume_confound
 from .data.synthetic import make_cohort
 from .features import extract_features
 from .seg_metrics import all_seg_metrics
@@ -90,12 +90,18 @@ def run_pipeline(cfg: dict) -> dict:
 
     table = features_to_table(feats)
     correlations = correlate_features(table, labels)
+    # flag features whose predictivity is just a restatement of lesion size (energy etc.)
+    vol_confound = volume_confound(table)
 
     # feature reproducibility under +/-1 voxel segmentation perturbation, the stability
     # companion to the outcome correlation (mirrors project 1's reconstruction analysis)
     from .reproducibility import feature_reproducibility, summarize_reproducibility
     repro_rows = feature_reproducibility(cohort, spacing=default_spacing, use_gt=True)
     reproducibility = summarize_reproducibility(repro_rows)
+    # rerun after a hounsfield floor excludes leaked air, the computational leakage fix
+    hu_floor = feat_cfg.get("hu_floor", -300.0)
+    repro_rows_floored = feature_reproducibility(cohort, spacing=default_spacing, use_gt=True, hu_floor=hu_floor)
+    reproducibility_floored = summarize_reproducibility(repro_rows_floored)
 
     results = {
         "source": data_cfg.get("source", "synthetic"),
@@ -106,8 +112,12 @@ def run_pipeline(cfg: dict) -> dict:
         "dice_std": float(np.std(dices)) if dices else float("nan"),
         "iou_mean": float(np.mean(ious)) if ious else float("nan"),
         "correlations": correlations,
+        "volume_confound": vol_confound,
         "reproducibility": reproducibility,
         "reproducibility_per_feature": repro_rows,
+        "hu_floor": hu_floor,
+        "reproducibility_floored": reproducibility_floored,
+        "reproducibility_per_feature_floored": repro_rows_floored,
         "qc": report.summary(),
     }
     logger.info("%s", results["qc"])
@@ -136,11 +146,23 @@ def format_results(results: dict, top_k: int = 5) -> str:
         lines.append(f"| {name} | {stats['pearson_r']:+.3f} | {stats['auc']:.3f} |")
 
     repro = results.get("reproducibility", {})
+    floored = results.get("reproducibility_floored", {})
     if repro:
-        lines += ["", "feature reproducibility under +/-1 voxel segmentation perturbation:",
-                  "| family | median ICC | % ICC>0.85 |", "|---|---|---|"]
+        hf = results.get("hu_floor", -300.0)
+        lines += ["", f"feature reproducibility under +/-1 voxel perturbation (raw -> {hf:.0f} HU floor):",
+                  "| family | median ICC raw | median ICC floored | % ICC>0.85 (raw -> floored) |",
+                  "|---|---|---|---|"]
         for fam in ("ALL", "shape", "firstorder"):
             if fam in repro:
-                s = repro[fam]
-                lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {s['pct_icc_gt_0.85']:.0f}% |")
+                s, f = repro[fam], floored.get(fam, {})
+                fm, fp = f.get("median_icc", float("nan")), f.get("pct_icc_gt_0.85", float("nan"))
+                lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {fm:.3f} | "
+                             f"{s['pct_icc_gt_0.85']:.0f}% -> {fp:.0f}% |")
+
+    vc = results.get("volume_confound", {})
+    flagged = [n for n, st in vc.items() if st["volume_proxy"]]
+    if flagged:
+        lines += ["", "volume-confounded features (|spearman with VoxelVolume| >= 0.7, predictivity is a size proxy):"]
+        for n in flagged[:6]:
+            lines.append(f"  {n}: rho={vc[n]['spearman_vol']:+.3f}")
     return "\n".join(lines)
