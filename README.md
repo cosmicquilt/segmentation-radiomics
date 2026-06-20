@@ -1,19 +1,26 @@
-# cancer-imaging segmentation -> radiomics -> outcome correlation
+# cancer-imaging radiomics: feature reproducibility + outcome correlation
 
-**why this matters for quantitative imaging.** this is the group's core daily
-workflow: take a scan, delineate the region of interest, turn that region into
-quantitative features, and relate those features to a clinical outcome. each step
-has to be reproducible and quality-controlled, because the features become
-biomarkers that inform real decisions. this project is a clean, end-to-end version
-of exactly that pipeline.
+**why this matters for quantitative imaging.** a radiomic feature is only a biomarker
+if it does two things: track the clinical outcome, *and* stay stable under the upstream
+variability that produced it. a feature that swings whenever the segmentation boundary
+moves by a voxel is noise dressed up as a number, no matter how well it correlates. so
+this project measures both halves: which features actually associate with the label, and
+which of those survive a perturbation of the segmentation.
 
 ```
-segmentation  ->  quantitative feature extraction  ->  correlate with outcome  ->  qc throughout
- (dice / iou)        (shape, intensity, texture)         (per-feature r, auc)      (flag failures)
+                                    -> feature reproducibility   (ICC / CCC under +/-1 voxel mask perturbation)
+segmentation -> feature extraction -|                                                  (which features are trustworthy)
+ (dice / iou)   (shape, intensity)  -> outcome correlation       (per-feature pearson r, auc)
+                                                       qc throughout (flag failures, never silently average)
 ```
 
-it's the companion to [project 1](../01-mri-reconstruction/): that one recovers a
-*trustworthy image*, this one turns trustworthy images into *trustworthy numbers*.
+**this is the downstream half of a two-project pipeline.**
+[project 1](../01-mri-reconstruction/) characterized one upstream source of radiomic
+feature instability, the image *reconstruction* (it found that the model winning SSIM
+was not the model preserving biomarkers). this project characterizes the other upstream
+source, the *segmentation*, with the **same ICC / CCC machinery**. project 1 asks how
+reconstruction perturbs features, this asks how segmentation does. together they recover
+a *trustworthy image* and then turn it into *trustworthy numbers*.
 
 ## what runs today vs the build plan
 
@@ -25,17 +32,20 @@ orchestration:
 |-------|----------------------|--------------------|
 | segmentation | hu threshold + largest component | **monai / nnu-net** 3d u-net, dice loss (`segmentation/model.py`) |
 | features | radiomics-lite (shape + first-order, numpy) | **pyradiomics** full texture families (glcm/glrlm/glszm) |
+| reproducibility | icc / ccc under +/-1 voxel erode/dilate | **real inter-observer** spread (lidc has 4 radiologist masks/nodule) |
 | correlation | per-feature pearson r + roc auc | same, on a real label (malignancy / survival) |
 | qc | empty / leakage / fragmentation checks | same |
 
 **build plan:** (1) load **lidc-idri**, the loader is written (`data/lidc.py`,
 `configs/lidc.yaml`) and pulls the consensus nodule mask **plus the radiologist
 malignancy rating**, a *real* label (no more manufactured one); (2) train the monai
-u-net, report dice/iou vs ground truth; (3) extract pyradiomics features; (4)
-correlate them with malignancy (pearson + auc). `configs/lidc.yaml` extracts features
-from the gt consensus mask so the biomarker correlation isn't contaminated by
-segmentation error. then stop, no radiogenomics (that's scope creep). see
-`scripts/download_data.md`.
+u-net, report dice/iou vs ground truth; (3) extract pyradiomics features; (4) correlate
+them with malignancy (pearson + auc) **and** rerun the reproducibility analysis on
+lidc's **four radiologist annotations per nodule**, real inter-observer variability that
+replaces the synthetic erode/dilate proxy with the genuine thing. `configs/lidc.yaml`
+extracts the correlation features from the gt consensus mask so the biomarker
+correlation isn't contaminated by segmentation error. then stop, no radiogenomics
+(that's scope creep). see `scripts/download_data.md`.
 
 ## quickstart
 
@@ -56,25 +66,57 @@ once you add the monai segmenter.
 
 ## results (synthetic, validates the plumbing, labelled as such)
 
-reproduce with `python scripts/smoke_test.py`:
+reproduce both tables with `python -m seg_radiomics.cli run --config configs/default.yaml`
+(numpy only, no download, ~3s). the synthetic label was built to depend on nodule size +
+density, so the analysis has a real signal to recover. **the numbers are synthetic, the
+methodology is the point.**
 
-- **segmentation:** dice ~1.0 on synthetic volumes. this is high *by construction*,
-  the synthetic nodule is cleanly separable from "lung" by a threshold. it proves the
-  metric/segmenter plumbing, **not** clinical difficulty. real lung ct is where dice
-  becomes meaningful and the learned u-net earns its keep.
-- **feature vs label correlation** (representative, the synthetic label was built to
-  depend on nodule size + density, and the analysis recovers that honestly):
+**segmentation:** dice ~1.0, high *by construction* (the synthetic nodule is cleanly
+threshold-separable from "lung"). it proves the metric/segmenter plumbing, **not**
+clinical difficulty. real lung ct is where dice becomes meaningful and the learned u-net
+earns its keep.
 
-  | feature | pearson r | auc |
-  |---|---|---|
-  | firstorder_Energy | +0.50 | 0.82 |
-  | shape_VoxelVolume | +0.52 | 0.79 |
-  | shape_EquivalentDiameter | +0.47 | 0.79 |
-  | shape_Sphericity | -0.42 | 0.19 |
+**1. feature reproducibility under +/-1 voxel segmentation perturbation.** each mask is
+eroded and dilated by one voxel (an inter-observer-boundary proxy), features are
+re-extracted from all three masks, and each feature gets an icc(2,1) + lin's ccc across
+the three segmentations. the features split sharply:
 
-  the point isn't the numbers (they're synthetic), it's that the
-  segmentation -> features -> correlation chain produces honest, interpretable
-  associations with qc in the loop.
+| feature | family | ICC | reproducible? |
+|---|---|---|---|
+| firstorder_90Percentile | first-order | 0.98 | yes |
+| firstorder_Maximum | first-order | 0.95 | yes |
+| shape_SurfaceArea | shape | 0.89 | yes |
+| shape_EquivalentDiameter | shape | 0.86 | yes |
+| shape_VoxelVolume | shape | 0.82 | borderline |
+| firstorder_Energy | first-order | 0.005 | **no** |
+| firstorder_Mean / Entropy / StdDev / Minimum | first-order | ~0.00 | **no** |
+
+the mechanism is real and lung-ct-specific: a +1 voxel dilation leaks into -800 hu lung
+air, which dominates the sum/mean-based first-order features (energy, mean, entropy, std)
+but barely touches the *upper* percentiles (90th, max) or the shape features. this is
+precisely why tight, consistent segmentation matters in lung-nodule radiomics. the
+*magnitude* here is stark by construction (the synthetic air contrast is extreme), the
+*ranking* of which features survive is the transferable result, and lidc's four
+radiologist masks per nodule turn this +/-1 voxel proxy into a real inter-observer
+measurement (build plan).
+
+**2. feature vs label correlation.** per-feature association with the synthetic
+malignancy-like label:
+
+| feature | pearson r | auc |
+|---|---|---|
+| shape_EquivalentDiameter | +0.77 | 0.93 |
+| shape_SurfaceArea | +0.75 | 0.93 |
+| shape_VoxelVolume | +0.74 | 0.93 |
+| shape_Sphericity | -0.73 | 0.10 |
+| firstorder_Energy | +0.72 | **0.99** |
+
+**the two tables together are the whole point.** firstorder_Energy is the single best
+label separator (auc 0.99) *and* the least reproducible feature (icc 0.005): correlation
+alone would crown it the biomarker, the reproducibility analysis says don't trust it
+without a tight segmentation. a feature has to win *both* tables to be a real biomarker,
+which is exactly the upstream->downstream stability question project 1 asked of
+reconstruction, asked here of segmentation.
 
 ## quality control (first-class, `qc.py`)
 
@@ -97,6 +139,7 @@ src/seg_radiomics/
 ├── morphology.py       # numpy erosion / surface / connected components
 ├── features.py         # radiomics-lite (pyradiomics-compatible names)
 ├── correlation.py      # pearson r + rank-based auc (no scipy/sklearn needed)
+├── reproducibility.py  # feature icc / ccc under +/-1 voxel mask perturbation
 ├── qc.py               # case-level quality control + report
 ├── pipeline.py         # cohort -> qc -> segment -> metrics -> features -> correlate
 ├── cli.py
@@ -114,5 +157,6 @@ tests/     test_core.py
 ## status
 
 pipeline scaffolded and **verified end-to-end on synthetic data** (segmentation
-metrics, radiomics-lite features, correlation, and qc all unit-tested, exit-0). next:
-load real lung ct and train the monai segmenter (build plan above).
+metrics, radiomics-lite features, feature reproducibility, outcome correlation, and qc
+all unit-tested, exit-0). next: load real lung ct, train the monai segmenter, and rerun
+the reproducibility analysis on lidc's four-radiologist annotations (build plan above).

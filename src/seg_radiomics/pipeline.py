@@ -91,6 +91,12 @@ def run_pipeline(cfg: dict) -> dict:
     table = features_to_table(feats)
     correlations = correlate_features(table, labels)
 
+    # feature reproducibility under +/-1 voxel segmentation perturbation, the stability
+    # companion to the outcome correlation (mirrors project 1's reconstruction analysis)
+    from .reproducibility import feature_reproducibility, summarize_reproducibility
+    repro_rows = feature_reproducibility(cohort, spacing=default_spacing, use_gt=True)
+    reproducibility = summarize_reproducibility(repro_rows)
+
     results = {
         "source": data_cfg.get("source", "synthetic"),
         "features_from": "ground_truth" if use_gt else "prediction",
@@ -100,6 +106,8 @@ def run_pipeline(cfg: dict) -> dict:
         "dice_std": float(np.std(dices)) if dices else float("nan"),
         "iou_mean": float(np.mean(ious)) if ious else float("nan"),
         "correlations": correlations,
+        "reproducibility": reproducibility,
+        "reproducibility_per_feature": repro_rows,
         "qc": report.summary(),
     }
     logger.info("%s", results["qc"])
@@ -126,4 +134,13 @@ def format_results(results: dict, top_k: int = 5) -> str:
     ]
     for name, stats in list(results["correlations"].items())[:top_k]:
         lines.append(f"| {name} | {stats['pearson_r']:+.3f} | {stats['auc']:.3f} |")
+
+    repro = results.get("reproducibility", {})
+    if repro:
+        lines += ["", "feature reproducibility under +/-1 voxel segmentation perturbation:",
+                  "| family | median ICC | % ICC>0.85 |", "|---|---|---|"]
+        for fam in ("ALL", "shape", "firstorder"):
+            if fam in repro:
+                s = repro[fam]
+                lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {s['pct_icc_gt_0.85']:.0f}% |")
     return "\n".join(lines)

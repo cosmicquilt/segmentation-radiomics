@@ -11,9 +11,9 @@ import pytest
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from seg_radiomics import correlation, features, qc, seg_metrics  # noqa: E402
-from seg_radiomics.data.synthetic import make_lesion_volume  # noqa: E402
-from seg_radiomics.morphology import connected_components  # noqa: E402
+from seg_radiomics import correlation, features, qc, reproducibility, seg_metrics  # noqa: E402
+from seg_radiomics.data.synthetic import make_cohort, make_lesion_volume  # noqa: E402
+from seg_radiomics.morphology import connected_components, erode  # noqa: E402
 from seg_radiomics.segmentation.baseline import threshold_segment  # noqa: E402
 
 
@@ -92,3 +92,37 @@ def test_qc_checks():
     assert not qc.check_mask_nonempty(np.zeros((4, 4), bool)).passed
     full = np.ones((4, 4), bool)
     assert not qc.check_volume_fraction(full, max_fraction=0.5).passed
+
+
+def test_dilate_erode_change_mask_size():
+    m = np.zeros((9, 9, 9), bool)
+    m[3:6, 3:6, 3:6] = True
+    assert reproducibility.dilate(m).sum() > m.sum()
+    assert erode(m).sum() < m.sum()
+
+
+def test_icc_agreement_and_offset():
+    col = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    same = np.stack([col, col, col], axis=1)
+    assert reproducibility.icc_2_1(same) == pytest.approx(1.0, abs=1e-6)
+    # a systematically biased segmentation lowers absolute-agreement icc below perfect
+    offset = np.stack([col, col, col + 3.0], axis=1)
+    assert reproducibility.icc_2_1(offset) < reproducibility.icc_2_1(same)
+
+
+def test_lin_ccc_identity_and_offset():
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    assert reproducibility.lin_ccc(x, x) == pytest.approx(1.0, abs=1e-9)
+    assert reproducibility.lin_ccc(x, x + 5.0) < 1.0  # offset penalized
+
+
+def test_feature_reproducibility_structure_and_ranking():
+    cohort = make_cohort(n=12, shape=(32, 40, 40), seed=1)
+    rows = reproducibility.feature_reproducibility(cohort, use_gt=True)
+    assert rows and all(np.isfinite(r["icc"]) for r in rows)
+    summary = reproducibility.summarize_reproducibility(rows)
+    assert summary["ALL"]["n"] == len(rows)
+    # boundary leakage into low-hu air makes mean-based first-order less reproducible
+    # than shape (the documented finding), a characterization test on fixed seed
+    by = {r["feature"]: r["icc"] for r in rows}
+    assert by["shape_SurfaceArea"] > by["firstorder_Mean"]

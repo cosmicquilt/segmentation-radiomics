@@ -1,0 +1,121 @@
+"""radiomic feature reproducibility under segmentation variability
+
+the reproducibility companion to the feature->outcome correlation. a biomarker is only
+useful if its feature value is stable when the segmentation boundary moves, so this
+perturbs each mask (erode / dilate by one voxel, a +/-1 voxel inter-observer proxy) and
+measures how well each feature agrees across the perturbations with lin's ccc and
+icc(2,1), aggregated by feature family.
+
+this mirrors project 1's reconstruction-stability analysis (same icc/ccc): project 1
+asks how *reconstruction* perturbs radiomic features, this asks how *segmentation* does.
+together they characterize the two upstream sources of biomarker instability.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+
+import numpy as np
+
+from .features import FEATURE_NAMES, extract_features
+from .morphology import _shift, erode
+
+
+def dilate(mask: np.ndarray) -> np.ndarray:
+    """6-/4-connectivity dilation add voxels adjacent to the mask along any axis"""
+    m = np.asarray(mask) > 0
+    out = m.copy()
+    for axis in range(m.ndim):
+        out |= _shift(m, 1, axis) | _shift(m, -1, axis)
+    return out
+
+
+def feature_class(name: str) -> str:
+    """coarse family from a pyradiomics-style feature name"""
+    if name.startswith("shape_"):
+        return "shape"
+    if name.startswith("firstorder_"):
+        return "firstorder"
+    return "other"
+
+
+def lin_ccc(x: np.ndarray, y: np.ndarray) -> float:
+    """lin's concordance correlation coefficient agreement to the identity line"""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    cov = ((x - x.mean()) * (y - y.mean())).mean()
+    denom = x.var() + y.var() + (x.mean() - y.mean()) ** 2
+    return float(2 * cov / denom) if denom > 1e-12 else 1.0
+
+
+def icc_2_1(data: np.ndarray) -> float:
+    """icc(2,1) two-way random effects absolute agreement single measurement
+
+    data is (n_targets, k_raters): each case is a target, each perturbed mask a rater
+    """
+    data = np.asarray(data, float)
+    n, k = data.shape
+    if n < 2 or k < 2:
+        return float("nan")
+    grand = data.mean()
+    ss_rows = k * ((data.mean(1) - grand) ** 2).sum()
+    ss_cols = n * ((data.mean(0) - grand) ** 2).sum()
+    ss_err = ((data - grand) ** 2).sum() - ss_rows - ss_cols
+    ms_rows = ss_rows / (n - 1)
+    ms_cols = ss_cols / (k - 1)
+    ms_err = ss_err / ((n - 1) * (k - 1) + 1e-12)
+    denom = ms_rows + (k - 1) * ms_err + k * (ms_cols - ms_err) / n
+    return float((ms_rows - ms_err) / denom) if abs(denom) > 1e-12 else float("nan")
+
+
+def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_voxels=8):
+    """per-feature icc / ccc across {reference, eroded, dilated} masks
+
+    the reference mask is the ground truth (use_gt) or the prediction. cases whose mask
+    erodes away below min_voxels are skipped so the ratios stay defined
+    """
+    triples: list[tuple[dict, dict, dict]] = []
+    for case in cohort:
+        ref = np.asarray(case["mask"] if use_gt else case.get("pred", case["mask"])) > 0
+        ero, dil = erode(ref), dilate(ref)
+        if ref.sum() < min_voxels or ero.sum() < min_voxels:
+            continue
+        sp = tuple(case.get("spacing", spacing))
+        try:
+            triples.append((
+                extract_features(case["image"], ref, sp),
+                extract_features(case["image"], ero, sp),
+                extract_features(case["image"], dil, sp),
+            ))
+        except ValueError:
+            continue
+
+    rows = []
+    for name in FEATURE_NAMES:
+        mat = np.array([[t[0][name], t[1][name], t[2][name]] for t in triples], float)
+        ok = np.isfinite(mat).all(axis=1)
+        if ok.sum() < 3:
+            continue
+        mat = mat[ok]
+        rows.append({
+            "feature": name,
+            "fclass": feature_class(name),
+            "icc": icc_2_1(mat),                      # agreement across the 3 segmentations
+            "ccc": lin_ccc(mat[:, 0], mat[:, 1:].mean(1)),  # reference vs mean perturbed
+        })
+    return rows
+
+
+def summarize_reproducibility(rows) -> dict:
+    """median icc and percent of features with icc > 0.85, per family and overall"""
+    buckets: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        buckets[r["fclass"]].append(r["icc"])
+        buckets["ALL"].append(r["icc"])
+    out = {}
+    for fam, vals in buckets.items():
+        arr = np.array(vals, float)
+        out[fam] = {
+            "n": int(arr.size),
+            "median_icc": round(float(np.nanmedian(arr)), 3),
+            "pct_icc_gt_0.85": round(100.0 * float(np.mean(arr > 0.85)), 1),
+        }
+    return out
