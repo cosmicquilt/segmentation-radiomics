@@ -122,6 +122,10 @@ every collapsed first-order feature comes back above 0.85 (energy 0.005 -> 0.95,
 flag unstable features, it shows a one-line preprocessing fix that restores them (the
 floor is `features.hu_floor` in the config).
 
+![raw vs floored ICC per feature: every first-order feature that collapsed under the raw +/-1 voxel perturbation (open circles near zero) recovers above the 0.85 good-reliability line once a -300 HU floor excludes the leaked air (filled circles), while the already-robust upper-percentile features barely move and the shape features recover modestly](docs/figures/parenchyma_floor_recovery.png)
+
+*regenerate with `python scripts/make_figures.py` (numpy + matplotlib, ~3s, fixed seed).*
+
 **3. feature vs label correlation, and the volume confound.** per-feature association with
 the synthetic malignancy-like label, plus each feature's spearman correlation with roi
 volume (a feature that is "predictive" only because it restates lesion size is not a
