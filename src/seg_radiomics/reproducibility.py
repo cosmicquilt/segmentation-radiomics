@@ -66,7 +66,8 @@ def icc_2_1(data: np.ndarray) -> float:
     return float((ms_rows - ms_err) / denom) if abs(denom) > 1e-12 else float("nan")
 
 
-def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_voxels=8, hu_floor=None):
+def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_voxels=8,
+                            hu_floor=None, min_snr=3.0):
     """per-feature icc / ccc across {reference, eroded, dilated} masks
 
     the reference mask is the ground truth (use_gt) or the prediction. cases whose mask
@@ -75,7 +76,13 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
     hu_floor (when set) intersects every mask with image >= hu_floor before extraction, a
     parenchyma-exclusion step that drops the air voxels a dilation leaked into. this is the
     computational fix for the boundary-leakage failure mode: run with and without it to
-    show how much first-order stability the floor recovers
+    show how much first-order stability the floor recovers.
+
+    a feature whose between-case spread is below min_snr times its within-case (perturbation)
+    spread is marked low_signal: it is near-constant across the cohort, so icc has almost no
+    variance to be reproducible about and the score is ill-conditioned. common in synthetic
+    data where a feature is fixed by construction (e.g. stddev when every nodule shares one
+    internal noise level)
     """
     triples: list[tuple[dict, dict, dict]] = []
     for case in cohort:
@@ -106,11 +113,19 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
         if ok.sum() < 3:
             continue
         mat = mat[ok]
+        # icc needs the feature to vary across cases. if the between-case spread is not
+        # comfortably larger than the within-case (perturbation) spread, the icc is
+        # ill-conditioned, so flag it instead of reporting a misleading agreement score
+        between = mat[:, 0].std()
+        within = (mat - mat.mean(axis=1, keepdims=True)).std()
+        snr = float(between / (within + 1e-12))
         rows.append({
             "feature": name,
             "fclass": feature_class(name),
             "icc": icc_2_1(mat),                      # agreement across the 3 segmentations
             "ccc": lin_ccc(mat[:, 0], mat[:, 1:].mean(1)),  # reference vs mean perturbed
+            "snr": snr,                               # between-case / within-case spread
+            "low_signal": bool(snr < min_snr),        # near-constant across cases, icc untrustworthy
         })
     return rows
 

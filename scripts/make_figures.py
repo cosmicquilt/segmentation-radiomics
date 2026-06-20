@@ -41,7 +41,9 @@ def _is_first_order(name: str) -> bool:
 def main() -> None:
     cohort = make_cohort(n=40, shape=(40, 56, 56), seed=0)  # matches configs/default.yaml
     raw = {r["feature"]: r["icc"] for r in feature_reproducibility(cohort, use_gt=True)}
-    flo = {r["feature"]: r["icc"] for r in feature_reproducibility(cohort, use_gt=True, hu_floor=-300.0)}
+    flo_rows = feature_reproducibility(cohort, use_gt=True, hu_floor=-300.0)
+    flo = {r["feature"]: r["icc"] for r in flo_rows}
+    low = {r["feature"]: r["low_signal"] for r in flo_rows}  # icc untrustworthy, near-constant across cases
 
     feats = sorted(raw, key=lambda k: raw[k])  # ascending raw icc, the collapsed ones at the bottom
     ys = list(range(len(feats)))
@@ -61,7 +63,7 @@ def main() -> None:
             fontsize=8, color="#444", va="top")
 
     ax.set_yticks(ys)
-    ax.set_yticklabels([_short(f) for f in feats], fontsize=9)
+    ax.set_yticklabels([_short(f) + ("  *" if low.get(f) else "") for f in feats], fontsize=9)
     for tick, f in zip(ax.get_yticklabels(), feats):
         tick.set_color(FO if _is_first_order(f) else SH)
     ax.set_ylim(-0.6, len(feats) - 0.4)
@@ -77,10 +79,15 @@ def main() -> None:
         Line2D([0], [0], marker="o", color="w", markerfacecolor=FO, markersize=8, label="floored, first-order"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=SH, markersize=8, label="floored, shape"),
     ]
-    ax.legend(handles=handles, loc="upper left", fontsize=8, frameon=True)
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.10),
+              ncol=3, fontsize=8, frameon=False)
     ax.grid(axis="x", ls=":", color="#dddddd")
     ax.set_axisbelow(True)
-    fig.tight_layout()
+    if any(low.values()):
+        ax.annotate("*  between-case variance too low for a reliable ICC "
+                    "(near-constant across the synthetic cohort)",
+                    xy=(0.5, -0.17), xycoords="axes fraction", ha="center", va="top",
+                    fontsize=7.5, color="#555555", style="italic")
 
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     out = FIG_DIR / "parenchyma_floor_recovery.png"

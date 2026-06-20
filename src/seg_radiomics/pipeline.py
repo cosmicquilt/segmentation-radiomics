@@ -158,6 +158,10 @@ def format_results(results: dict, top_k: int = 5) -> str:
                 fm, fp = f.get("median_icc", float("nan")), f.get("pct_icc_gt_0.85", float("nan"))
                 lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {fm:.3f} | "
                              f"{s['pct_icc_gt_0.85']:.0f}% -> {fp:.0f}% |")
+        low = [r["feature"] for r in results.get("reproducibility_per_feature_floored", [])
+               if r.get("low_signal")]
+        if low:
+            lines.append(f"low-signal (icc ill-conditioned, near-constant across cases): {', '.join(low)}")
 
     vc = results.get("volume_confound", {})
     flagged = [n for n, st in vc.items() if st["volume_proxy"]]

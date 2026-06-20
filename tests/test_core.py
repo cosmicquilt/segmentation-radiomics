@@ -153,3 +153,16 @@ def test_hu_floor_recovers_first_order_reproducibility():
            for r in reproducibility.feature_reproducibility(cohort, use_gt=True, hu_floor=-300.0)}
     # raw, the dilation leaks into -800 hu air and collapses the mean; the floor rescues it
     assert raw["firstorder_Mean"] < 0.5 and flo["firstorder_Mean"] > 0.85
+
+
+def test_low_signal_guard_flags_near_constant_feature():
+    # the canonical cohort the figure uses, where the heuristic is deterministic
+    cohort = make_cohort(n=40, shape=(40, 56, 56), seed=0)
+    rows = {r["feature"]: r
+            for r in reproducibility.feature_reproducibility(cohort, use_gt=True, hu_floor=-300.0)}
+    # stddev has by far the lowest between/within signal (nodules share one internal noise
+    # level), an order of magnitude under mean (which varies with nodule density)
+    assert rows["firstorder_StdDev"]["snr"] < rows["firstorder_Mean"]["snr"] / 10
+    # on this cohort the guard flags stddev and not mean; the flag is just snr < min_snr
+    assert rows["firstorder_StdDev"]["low_signal"]
+    assert not rows["firstorder_Mean"]["low_signal"]

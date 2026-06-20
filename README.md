@@ -118,9 +118,10 @@ mask, removing the air a dilation leaked into) recovers it almost completely:
 | first-order | 0.01 | 0.97 | 25% -> 88% |
 
 every collapsed first-order feature comes back above 0.85 (energy 0.005 -> 0.95, mean
-0.03 -> 1.00, std 0.00 -> 0.85). this is the actionable half: the pipeline doesn't just
-flag unstable features, it shows a one-line preprocessing fix that restores them (the
-floor is `features.hu_floor` in the config).
+0.03 -> 1.00; stddev recovers to 0.85 but is flagged low-signal, see the caveat below).
+this is the actionable half: the pipeline doesn't just flag unstable features, it shows a
+one-line preprocessing fix that restores them (the floor is `features.hu_floor` in the
+config).
 
 ![raw vs floored ICC per feature: every first-order feature that collapsed under the raw +/-1 voxel perturbation (open circles near zero) recovers above the 0.85 good-reliability line once a -300 HU floor excludes the leaked air (filled circles), while the already-robust upper-percentile features barely move and the shape features recover modestly](docs/figures/parenchyma_floor_recovery.png)
 
@@ -156,6 +157,15 @@ disagreement. the real measurement is lidc's four independent radiologist contou
 nodule (build plan), which the same icc(2,1) code consumes directly. icc is reported per
 feature, not as a single family average, because the families are bimodal (the first-order
 split above would otherwise vanish into a meaningless "moderate" mean).
+
+one feature, stddev, is flagged **low-signal** (the asterisk in the figure): every
+synthetic nodule is built with the same internal noise level, so stddev barely varies
+across cases (range 23 to 26) and its icc, recovered or not, has almost nothing to be
+reproducible *about*. the pipeline flags it with a heuristic guard (between-case spread
+under `min_snr` times the within-case spread, `reproducibility.feature_reproducibility`),
+the same kind of degeneracy check project 1 needed when a normalization choice made
+first-order features near-constant. real lung ct, where nodule heterogeneity genuinely
+varies, gives stddev a real signal and a trustworthy icc.
 
 ## quality control (first-class, `qc.py`)
 
