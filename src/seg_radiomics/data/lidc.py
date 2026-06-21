@@ -49,7 +49,8 @@ def build_lidc_cohort(
 ) -> list[dict]:
     """load a lidc nodule cohort
 
-    limit cap the number of scans scanned (a subset not the full 133gb) none uses all
+    limit how many scans with dicoms on disk to load (a subset download is normal, scans
+        without local dicoms are skipped) none loads every available scan
     clevel consensus level in [0 1] for merging radiologist annotations
     pad voxels of padding around the consensus bounding box
     malignant_threshold malignancy > this (default 3) -> label 1 (malignant) 3 is the
@@ -62,12 +63,23 @@ def build_lidc_cohort(
     pl, consensus = _require_pylidc()
 
     scans = pl.query(pl.Scan)
-    total = scans.count()
-    logger.info("LIDC: %d scans available", total)
+    logger.info("LIDC: %d scans in the pylidc db, loading up to %s that have dicoms on disk",
+                scans.count(), limit)
 
     cohort: list[dict] = []
-    for scan in scans[: limit if limit is not None else total]:
-        volume = scan.to_volume()  # (rows cols slices) in hu
+    used, attempted = 0, 0
+    for scan in scans:
+        if limit is not None and used >= limit:
+            break
+        attempted += 1
+        # a subset download is normal, so load only scans whose dicoms are actually present
+        # rather than assuming the first `limit` scans in db order are the ones that were fetched
+        try:
+            volume = scan.to_volume(verbose=False)  # (rows cols slices) in hu
+        except Exception as exc:
+            logger.debug("LIDC: skip %s (no dicoms on disk): %s", scan.patient_id, exc)
+            continue
+        used += 1
         spacing = (float(scan.pixel_spacing), float(scan.pixel_spacing), float(scan.slice_spacing))
         for annotations in scan.cluster_annotations():
             if len(annotations) < min_annotations:
@@ -88,5 +100,12 @@ def build_lidc_cohort(
                     "scan_id": scan.patient_id,
                 }
             )
-    logger.info("LIDC: built cohort of %d nodules", len(cohort))
+    if not cohort:
+        raise RuntimeError(
+            f"LIDC: loaded 0 scans with dicoms after trying {attempted}. pylidc could not locate "
+            "the dicom files. it expects ~/.pylidcrc 'path' to point at the directory that holds "
+            "the patient folders, i.e. <path>/LIDC-IDRI-XXXX/<study>/<series>/*.dcm. verify the "
+            "download layout matches that (see scripts/download_data.md)."
+        )
+    logger.info("LIDC: built %d nodules from %d scans (tried %d)", len(cohort), used, attempted)
     return cohort
