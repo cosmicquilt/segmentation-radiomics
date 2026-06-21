@@ -28,9 +28,16 @@ logger = logging.getLogger("seg_radiomics.data.lidc")
 def _require_pylidc():
     import configparser
 
-    # pylidc still calls configparser.SafeConfigParser, removed in python 3.12 (colab default)
+    # pylidc targets old python/numpy and calls several apis removed in modern versions
+    # (colab is python 3.12 + numpy 2.x). restore the ones it uses before importing it:
+    # configparser.SafeConfigParser (gone in 3.12) and the np.* builtin aliases (gone in
+    # numpy 1.24 / 2.0, e.g. np.int in Contour.to_matrix, np.bool in the mask builders)
     if not hasattr(configparser, "SafeConfigParser"):
         configparser.SafeConfigParser = configparser.ConfigParser
+    for _name, _builtin in (("int", int), ("float", float), ("bool", bool),
+                            ("object", object), ("str", str), ("long", int), ("complex", complex)):
+        if not hasattr(np, _name):
+            setattr(np, _name, _builtin)
     try:
         import pylidc as pl
         from pylidc.utils import consensus
