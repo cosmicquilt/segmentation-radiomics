@@ -39,6 +39,8 @@ def build_cohort(cfg: dict) -> list[dict]:
             seed=cfg.get("seed", 0),
         )
     if source == "lidc":
+        import os
+
         from .data.lidc import build_lidc_cohort
 
         return build_lidc_cohort(
@@ -47,6 +49,7 @@ def build_cohort(cfg: dict) -> list[dict]:
             pad=data_cfg.get("pad", 2),
             malignant_threshold=data_cfg.get("malignant_threshold", 3),
             exclude_indeterminate=data_cfg.get("exclude_indeterminate", False),
+            dicom_root=os.environ.get("LIDC_DICOM_ROOT") or data_cfg.get("dicom_root"),
         )
     raise ValueError(f"Unknown data.source {source!r} (use 'synthetic' or 'lidc').")
 

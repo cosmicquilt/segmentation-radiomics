@@ -26,6 +26,11 @@ logger = logging.getLogger("seg_radiomics.data.lidc")
 
 
 def _require_pylidc():
+    import configparser
+
+    # pylidc still calls configparser.SafeConfigParser, removed in python 3.12 (colab default)
+    if not hasattr(configparser, "SafeConfigParser"):
+        configparser.SafeConfigParser = configparser.ConfigParser
     try:
         import pylidc as pl
         from pylidc.utils import consensus
@@ -34,7 +39,7 @@ def _require_pylidc():
     except Exception as exc:  # pragma: no cover exercised only without pylidc
         raise RuntimeError(
             "pylidc is required for the LIDC loader. Install it (`pip install pylidc`) "
-            "and create ~/.pylidcrc pointing at the extracted LIDC DICOMs "
+            "and set data.dicom_root to the tcia download dir (or create ~/.pylidcrc) "
             "(see scripts/download_data.md)."
         ) from exc
 
@@ -46,6 +51,7 @@ def build_lidc_cohort(
     malignant_threshold: int = 3,
     exclude_indeterminate: bool = False,
     min_annotations: int = 1,
+    dicom_root: str | None = None,
 ) -> list[dict]:
     """load a lidc nodule cohort
 
@@ -57,10 +63,23 @@ def build_lidc_cohort(
         radiologists indeterminate
     exclude_indeterminate drop nodules whose median malignancy == 3
     min_annotations require at least this many radiologist annotations per nodule
+    dicom_root flat tcia_utils download dir (<root>/<series_uid>/*.dcm); when set the loader
+        points pylidc straight at each scan's series folder, so no ~/.pylidcrc or file reorg is
+        needed and only downloaded series load. none falls back to pylidc + ~/.pylidcrc
 
     returns list of dicts {image mask label malignancy spacing scan_id}
     """
+    import os
+
     pl, consensus = _require_pylidc()
+
+    if dicom_root:
+        # tcia_utils saves <root>/<SeriesInstanceUID>/*.dcm (flat), but pylidc expects a
+        # patient/study/series hierarchy via ~/.pylidcrc. point each scan straight at its flat
+        # series folder so the subset download loads as-is (also sidesteps pylidc's config read)
+        pl.Scan.get_path_to_dicom_files = (
+            lambda self, *a, **k: os.path.join(dicom_root, self.series_instance_uid)
+        )
 
     scans = pl.query(pl.Scan)
     logger.info("LIDC: %d scans in the pylidc db, loading up to %s that have dicoms on disk",
@@ -74,6 +93,8 @@ def build_lidc_cohort(
         attempted += 1
         # a subset download is normal, so load only scans whose dicoms are actually present
         # rather than assuming the first `limit` scans in db order are the ones that were fetched
+        if dicom_root and not os.path.isdir(os.path.join(dicom_root, scan.series_instance_uid)):
+            continue  # series not in the downloaded subset
         try:
             volume = scan.to_volume(verbose=False)  # (rows cols slices) in hu
         except Exception as exc:
