@@ -24,37 +24,32 @@ a *trustworthy image* and then turn it into *trustworthy numbers*.
 
 ## what runs today vs the build plan
 
-the pipeline runs **end-to-end right now** on synthetic lung-ct-like volumes with a
-numpy threshold baseline, no download, no gpu. the learned pieces plug into the same
-orchestration:
+the pipeline runs **end-to-end right now** two ways: on synthetic lung-ct-like volumes
+(numpy, no download, no gpu) **and on real lidc-idri** ct with radiologist masks and
+malignancy ratings (needs pylidc + a tcia subset, see the colab notebook). the learned
+segmenter is the main piece still to swap in:
 
 | stage | runs today (baseline) | production upgrade |
 |-------|----------------------|--------------------|
 | segmentation | hu threshold + largest component | **monai / nnu-net** 3d u-net, dice loss (`segmentation/model.py`) |
 | features | radiomics-lite (shape + first-order, numpy) | **pyradiomics** texture families (glcm/glrlm/glszm), fixed 25 hu bin width, ibsi-compliant |
-| reproducibility | icc(2,1) under +/-1 voxel erode/dilate, raw + parenchyma-floored | **real inter-observer** spread (lidc's 4 radiologist masks/nodule), stochastic contour perturbation |
-| confound checks | spearman vs roi volume (size-proxy flag) | + small-nodule icc stratification, combat cross-batch harmonization |
-| correlation | per-feature pearson r + roc auc | same, on a real label (malignancy / survival) |
+| reproducibility | icc(2,1) under +/-1 voxel erode/dilate **and across lidc's 4 radiologist masks** (real inter-observer), raw + parenchyma-floored | stochastic contour perturbation, texture-family icc |
+| confound checks | spearman vs roi volume (size-proxy flag), nodules-per-patient | small-nodule icc stratification, combat cross-batch harmonization |
+| correlation | per-feature pearson r + roc auc, synthetic **and real lidc malignancy** | cluster-robust / mixed-effects stats (nodules cluster within patients) |
 | qc | empty / leakage / fragmentation checks | same |
 
-**build plan:** (1) load **lidc-idri**, the loader is written (`data/lidc.py`,
-`configs/lidc.yaml`) and pulls the consensus nodule mask **plus the radiologist
-malignancy rating**, a *real* label (no more manufactured one); (2) train the monai
-u-net, report dice/iou vs ground truth; (3) extract pyradiomics features; (4) correlate
-them with malignancy (pearson + auc) **and** rerun the reproducibility analysis on
-lidc's **four radiologist annotations per nodule**, real inter-observer variability that
-replaces the synthetic erode/dilate proxy with the genuine thing. `configs/lidc.yaml`
-extracts the correlation features from the gt consensus mask so the biomarker
-correlation isn't contaminated by segmentation error. then stop, no radiogenomics
-(that's scope creep). see `scripts/download_data.md`.
-
-the lidc step also picks up the methods upgrades a radiomics review flagged: pyradiomics
-texture families (glcm/glrlm) under the 4-rater variance, a **fixed 25 hu bin width** (not
-a fixed bin count, so a gray level means the same thing across patients) for ibsi
-compliance, a stochastic contour perturbation alongside the deterministic erode/dilate,
-icc stratified by nodule size (a one-voxel shift erases more of a 4 mm nodule than a 30 mm
-one), and combat / nested-combat as the cross-scanner harmonization step once features
-span acquisition batches.
+**what's done vs left.** the lidc-idri path now runs end-to-end (loader `data/lidc.py`,
+`configs/lidc.yaml`): real consensus masks, the radiologist malignancy rating as the label,
+and the 4-radiologist inter-observer reproducibility, all in the real-data results below.
+**still on the build plan:** (1) train the monai u-net to replace the threshold baseline
+(dice 0.47 on real ct is weak by design); (2) swap radiomics-lite for **pyradiomics** texture
+families (glcm/glrlm) under a **fixed 25 hu bin width** (not a fixed bin count, so a gray
+level means the same thing across patients) for ibsi compliance; (3) cluster-robust or
+mixed-effects stats, since nodules cluster within patients; (4) validate the malignancy
+correlation on lidc's ~157-case **pathology-confirmed** subset, not just the subjective
+rating. a stochastic contour perturbation, small-nodule icc stratification, and combat /
+nested-combat harmonization round out the list. then stop, no radiogenomics (scope creep).
+see `scripts/download_data.md`.
 
 ## quickstart
 
@@ -73,7 +68,7 @@ colab: open [`notebooks/colab_segmentation_radiomics.ipynb`](notebooks/colab_seg
 it runs the synthetic pipeline immediately, a gpu runtime (t4/l4/a100) is recommended
 once you add the monai segmenter.
 
-## results (synthetic, validates the plumbing, labelled as such)
+## results, part 1: synthetic phantom (the method, illustrated)
 
 reproduce both tables with `python -m seg_radiomics.cli run --config configs/default.yaml`
 (numpy only, no download, ~3s). the synthetic label was built to depend on nodule size +
@@ -154,9 +149,10 @@ stability question project 1 asked of reconstruction, asked here of segmentation
 stochastic inter-observer variability, so the shape-feature ICCs partly reflect grid
 geometry (a uniform dilation changes volume by a fixed function) rather than reader
 disagreement. the real measurement is lidc's four independent radiologist contours per
-nodule (build plan), which the same icc(2,1) code consumes directly. icc is reported per
-feature, not as a single family average, because the families are bimodal (the first-order
-split above would otherwise vanish into a meaningless "moderate" mean).
+nodule, which the same icc(2,1) code consumes directly (see part 2 below, where the
+radiologists turn out to agree *far* more than this proxy). icc is reported per feature, not
+as a single family average, because the families are bimodal (the first-order split above
+would otherwise vanish into a meaningless "moderate" mean).
 
 one feature, stddev, is flagged **low-signal** (the asterisk in the figure): every
 synthetic nodule is built with the same internal noise level, so stddev barely varies
@@ -166,6 +162,62 @@ under `min_snr` times the within-case spread, `reproducibility.feature_reproduci
 the same kind of degeneracy check project 1 needed when a normalization choice made
 first-order features near-constant. real lung ct, where nodule heterogeneity genuinely
 varies, gives stddev a real signal and a trustworthy icc.
+
+## results, part 2: real lidc-idri (the validation)
+
+the identical pipeline runs on **lidc-idri** lung ct (`configs/lidc.yaml`): the segmentation
+is the **consensus of up to four radiologist annotations** per nodule, the label is the
+radiologists' **malignancy rating (1-5)** binarized at > 3, and the correlation features come
+from the consensus mask. one run on a 32-scan subset gave **109 nodules from 32 patients**.
+
+**1. real inter-observer reproducibility (the headline).** instead of the synthetic +/-1
+voxel proxy, this treats the **four radiologist masks as four raters** and computes icc(2,1)
+across them (n=54 nodules drawn by all four), the gold-standard inter-observer design. the
+method holds, and the proxy turns out to have been pessimistic:
+
+| family | median ICC raw | median ICC floored | % ICC > 0.75 (raw -> floored) |
+|---|---|---|---|
+| all 12 | 0.92 | 0.99 | 75% -> 92% |
+| shape | 0.95 | 0.99 | 100% -> 100% |
+| first-order | 0.84 | 0.99 | 62% -> 88% |
+
+![grouped bars of median ICC by feature family: the four-radiologist inter-observer bars sit far above the +/-1 voxel proxy bars at every family, and the -300 HU floor lifts both to near 1.0; 75 percent of features clear ICC 0.75 raw, shape higher than first-order](docs/figures/lidc_interobserver.png)
+
+two honest reads. first, **75% of features clear icc 0.75 raw** (shape 100%, first-order 62%),
+right in the published lidc inter-observer range (~60-85%), with shape beating first-order
+exactly as expected. second, **real radiologists agree far more than the proxy implied**
+(median icc 0.92 vs the proxy's 0.55): a uniform one-voxel erode/dilate is a deliberately
+harsh stand-in, so it *under*-states real reproducibility. the proxy earns its keep because
+the *qualitative* findings (shape > first-order, the floor helping, which features are robust)
+replicate on the real readers, and the floor still lifts everything to ~0.99.
+
+**2. feature vs malignancy, with three caveats that matter.** nodule **size** is the strongest
+predictor of the malignancy rating:
+
+| feature | pearson r | auc | spearman w/ volume |
+|---|---|---|---|
+| shape_EquivalentDiameter | +0.72 | 0.94 | +1.00 (definitional) |
+| shape_SurfaceArea | +0.59 | 0.95 | +0.98 (definitional) |
+| shape_VoxelVolume | +0.55 | 0.94 | (size) |
+| shape_Sphericity | -0.52 | 0.15 | -0.72 |
+
+but that auc must be read against three caveats the pipeline and a radiomics review both flag:
+
+- **the label is subjective, not pathology.** lidc malignancy is the radiologists' *suspicion*,
+  and radiologists use size as a primary malignancy cue (fleischner / lung-rads). so size
+  predicting the rating at auc 0.94 is a **confirmation of clinical triaging guidelines, not
+  the discovery of an independent biomarker** (the size-only baseline on this label is a
+  published auc 0.94-0.97, so this is exactly the expected number).
+- **energy is a size proxy.** the volume-confound check flags `firstorder_Energy` at spearman
+  0.81 with volume, so even where an intensity feature looks predictive it can be size in
+  disguise, and is discounted.
+- **nodules cluster within patients** (109 from 32), so the univariate stats are not
+  independent; the run reports the patient count and a proper analysis needs cluster-robust or
+  mixed-effects modeling (build plan).
+
+**segmentation** dice was 0.47 on the threshold baseline (weak on real ct, as expected); the
+features use the consensus mask, so this does not touch the feature results, and it is exactly
+what the monai segmenter is for.
 
 ## quality control (first-class, `qc.py`)
 
@@ -198,14 +250,16 @@ src/seg_radiomics/
 └── segmentation/
     ├── baseline.py     # threshold + largest-component (runs now)
     └── model.py        # monai u-net (production stub)
-scripts/   smoke_test.py · download_data.md
+scripts/   smoke_test.py · make_figures.py · download_data.md
 configs/   default.yaml · lidc.yaml
 tests/     test_core.py
 ```
 
 ## status
 
-pipeline scaffolded and **verified end-to-end on synthetic data** (segmentation
-metrics, radiomics-lite features, feature reproducibility, outcome correlation, and qc
-all unit-tested, exit-0). next: load real lung ct, train the monai segmenter, and rerun
-the reproducibility analysis on lidc's four-radiologist annotations (build plan above).
+**verified end-to-end on both synthetic data and real lidc-idri.** the synthetic phantom
+develops the method (floor recovery, volume-confound, the low-signal guard, all unit-tested,
+exit-0); the real lidc run validates it (109 nodules / 32 patients, 4-radiologist
+inter-observer reproducibility median icc 0.92 raw -> 0.99 floored, matching the published
+range). next: train the monai segmenter to replace the dice-0.47 threshold baseline, add
+pyradiomics texture under a fixed bin width, and cluster-robust stats (build plan above).

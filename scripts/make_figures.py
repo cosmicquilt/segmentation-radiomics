@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -95,5 +96,60 @@ def main() -> None:
     print(f"wrote {out}")
 
 
+def real_lidc_figure() -> None:
+    """proxy vs real-radiologist reproducibility on lidc, by feature family
+
+    regenerates from results/lidc/results.json when a real lidc run is present (colab),
+    otherwise uses the snapshot from the n=54 nodule / 32 patient run (commit ba566e3)
+    """
+    import json
+
+    def medians(summary):
+        return [summary[f]["median_icc"] for f in ("ALL", "shape", "firstorder")]
+
+    rj = Path(__file__).resolve().parents[1] / "results" / "lidc" / "results.json"
+    if rj.exists() and json.loads(rj.read_text()).get("interobserver"):
+        r = json.loads(rj.read_text())
+        proxy_raw, proxy_flo = medians(r["reproducibility"]), medians(r["reproducibility_floored"])
+        real_raw, real_flo = medians(r["interobserver"]), medians(r["interobserver_floored"])
+        n_nod, n_pat = r.get("interobserver_n_nodules", "?"), r.get("n_patients", "?")
+    else:
+        proxy_raw, proxy_flo = [0.549, 0.769, 0.458], [0.897, 0.904, 0.815]
+        real_raw, real_flo = [0.922, 0.954, 0.841], [0.990, 0.990, 0.990]
+        n_nod, n_pat = 54, 32
+
+    fams = ["all 12", "shape", "first-order"]
+    x = np.arange(len(fams))
+    w = 0.2
+    series = [
+        ("+/-1 voxel proxy, raw", proxy_raw, "#9ecae1"),
+        ("+/-1 voxel proxy, floored", proxy_flo, "#3182bd"),
+        ("4 radiologists, raw", real_raw, "#fdae6b"),
+        ("4 radiologists, floored", real_flo, "#e6550d"),
+    ]
+    fig, ax = plt.subplots(figsize=(8.6, 5.2))
+    for i, (label, vals, col) in enumerate(series):
+        ax.bar(x + (i - 1.5) * w, vals, w, label=label, color=col)
+    for thr, c in ((0.75, "#888888"), (0.85, "#444444")):
+        ax.axhline(thr, ls="--", color=c, lw=1.0)
+        ax.text(len(fams) - 0.45, thr + 0.005, f"ICC {thr}", fontsize=7.5, color=c, va="bottom")
+    ax.set_xticks(x)
+    ax.set_xticklabels(fams)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("median ICC(2,1)")
+    ax.set_title("real radiologists agree far more than the +/-1 voxel proxy\n"
+                 f"lidc inter-observer reproducibility, n={n_nod} nodules / {n_pat} patients",
+                 fontsize=11)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.22), ncol=2, fontsize=8, frameon=False)
+    ax.grid(axis="y", ls=":", color="#dddddd")
+    ax.set_axisbelow(True)
+
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    out = FIG_DIR / "lidc_interobserver.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"wrote {out}")
+
+
 if __name__ == "__main__":
     main()
+    real_lidc_figure()
