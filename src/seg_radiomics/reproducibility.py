@@ -35,6 +35,8 @@ def feature_class(name: str) -> str:
         return "shape"
     if name.startswith("firstorder_"):
         return "firstorder"
+    if name.startswith("glcm_"):
+        return "texture"
     return "other"
 
 

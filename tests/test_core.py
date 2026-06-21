@@ -61,7 +61,8 @@ def test_features_finite_and_volume_monotone():
     small[8:12, 10:14, 10:14] = True
     big = np.zeros_like(image, bool)
     big[6:14, 8:16, 8:16] = True
-    image[big] = 30.0
+    rng = np.random.default_rng(0)
+    image[big] = rng.normal(30.0, 30.0, size=int(big.sum())).astype(np.float32)  # textured, so glcm is defined
     f_small = features.extract_features(image, small)
     f_big = features.extract_features(image, big)
     assert all(np.isfinite(v) for v in f_big.values())
@@ -203,3 +204,19 @@ def test_rater_mask_agreement_dice():
     d_diff, _ = reproducibility.rater_mask_agreement(
         [{"image": img, "rater_masks": [base, erode(base), reproducibility.dilate(base), base]}], n_raters=4)
     assert d_diff < 0.99
+
+
+def test_glcm_texture_features():
+    rng = np.random.default_rng(0)
+    img = rng.normal(0.0, 50.0, (20, 24, 24)).astype(np.float32)
+    mask = np.zeros((20, 24, 24), bool)
+    mask[6:14, 8:16, 8:16] = True
+    f = features.extract_features(img, mask)
+    assert len(features.GLCM_NAMES) == 10
+    assert all(np.isfinite(f[k]) for k in features.GLCM_NAMES)
+    # a uniform region has < 2 gray levels, so texture is nan (downstream isfinite drops it)
+    u = np.full((10, 10, 10), 100.0, np.float32)
+    um = np.zeros((10, 10, 10), bool)
+    um[3:7, 3:7, 3:7] = True
+    fu = features.extract_features(u, um)
+    assert all(np.isnan(fu[k]) for k in features.GLCM_NAMES)

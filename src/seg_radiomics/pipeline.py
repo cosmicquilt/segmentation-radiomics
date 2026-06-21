@@ -186,7 +186,7 @@ def format_results(results: dict, top_k: int = 5) -> str:
         lines += ["", f"feature reproducibility under +/-1 voxel perturbation (raw -> {hf:.0f} HU floor):",
                   "| family | median ICC raw | median ICC floored | % ICC>0.85 (raw -> floored) |",
                   "|---|---|---|---|"]
-        for fam in ("ALL", "shape", "firstorder"):
+        for fam in ("ALL", "shape", "firstorder", "texture"):
             if fam in repro:
                 s, f = repro[fam], floored.get(fam, {})
                 fm, fp = f.get("median_icc", float("nan")), f.get("pct_pass", float("nan"))
@@ -206,7 +206,7 @@ def format_results(results: dict, top_k: int = 5) -> str:
                   f"(n={n} nodules drawn by all {k}, raw -> {hf:.0f} HU floor):",
                   "| family | median ICC raw | median ICC floored | % ICC>0.75 (raw -> floored) |",
                   "|---|---|---|---|"]
-        for fam in ("ALL", "shape", "firstorder"):
+        for fam in ("ALL", "shape", "firstorder", "texture"):
             if fam in io:
                 s, f = io[fam], io_fl.get(fam, {})
                 fm, fp = f.get("median_icc", float("nan")), f.get("pct_pass", float("nan"))

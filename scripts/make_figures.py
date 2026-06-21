@@ -28,7 +28,16 @@ FIG_DIR = Path(__file__).resolve().parents[1] / "docs" / "figures"
 
 FO = "#0072B2"   # first-order family
 SH = "#D55E00"   # shape family
+TX = "#009E73"   # texture (glcm) family
 RAW = "#9a9a9a"  # raw (pre-floor) markers
+
+
+def _family_color(name: str) -> str:
+    if name.startswith("shape_"):
+        return SH
+    if name.startswith("glcm_"):
+        return TX
+    return FO
 
 
 def _short(name: str) -> str:
@@ -49,9 +58,9 @@ def main() -> None:
     feats = sorted(raw, key=lambda k: raw[k])  # ascending raw icc, the collapsed ones at the bottom
     ys = list(range(len(feats)))
 
-    fig, ax = plt.subplots(figsize=(9.2, 6.2))
+    fig, ax = plt.subplots(figsize=(9.2, max(6.2, 0.42 * len(feats) + 2.2)))
     for y, f in zip(ys, feats):
-        col = FO if _is_first_order(f) else SH
+        col = _family_color(f)
         r0, r1 = raw[f], flo[f]
         if abs(r1 - r0) > 0.02:  # draw the recovery arrow only when it actually moves
             ax.annotate("", xy=(r1, y), xytext=(r0, y),
@@ -66,7 +75,7 @@ def main() -> None:
     ax.set_yticks(ys)
     ax.set_yticklabels([_short(f) + ("  *" if low.get(f) else "") for f in feats], fontsize=9)
     for tick, f in zip(ax.get_yticklabels(), feats):
-        tick.set_color(FO if _is_first_order(f) else SH)
+        tick.set_color(_family_color(f))
     ax.set_ylim(-0.6, len(feats) - 0.4)
     ax.set_xlim(-0.05, 1.06)
     ax.set_xlabel("ICC(2,1) across the three perturbed segmentations (reference, eroded, dilated)")
@@ -79,9 +88,10 @@ def main() -> None:
                markeredgecolor=RAW, markersize=8, label="raw ICC (pre-floor)"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=FO, markersize=8, label="floored, first-order"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=SH, markersize=8, label="floored, shape"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=TX, markersize=8, label="floored, texture"),
     ]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.10),
-              ncol=3, fontsize=8, frameon=False)
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.08),
+              ncol=4, fontsize=8, frameon=False)
     ax.grid(axis="x", ls=":", color="#dddddd")
     ax.set_axisbelow(True)
     if any(low.values()):

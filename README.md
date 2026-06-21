@@ -32,7 +32,7 @@ segmenter is the main piece still to swap in:
 | stage | runs today (baseline) | production upgrade |
 |-------|----------------------|--------------------|
 | segmentation | hu threshold + largest component | **monai / nnu-net** 3d u-net, dice loss (`segmentation/model.py`) |
-| features | radiomics-lite (shape + first-order, numpy) | **pyradiomics** texture families (glcm/glrlm/glszm), fixed 25 hu bin width, ibsi-compliant |
+| features | radiomics-lite (shape + first-order + **glcm texture**, numpy, fixed 25 hu bin width) | **pyradiomics** remaining families (glrlm/glszm/ngtdm), ibsi-validated |
 | reproducibility | icc(2,1) under +/-1 voxel erode/dilate **and across lidc's 4 radiologist masks** (real inter-observer), raw + parenchyma-floored | stochastic contour perturbation, texture-family icc |
 | confound checks | spearman vs roi volume (size-proxy flag), nodules-per-patient | small-nodule icc stratification, combat cross-batch harmonization |
 | correlation | per-feature pearson r + roc auc, synthetic **and real lidc malignancy** | cluster-robust / mixed-effects stats (nodules cluster within patients) |
@@ -108,17 +108,20 @@ mask, removing the air a dilation leaked into) recovers it almost completely:
 
 | family | median ICC raw | median ICC floored | % ICC > 0.85 (raw -> floored) |
 |---|---|---|---|
-| all 12 | 0.39 | 0.95 | 33% -> 92% |
+| all 22 | 0.01 | 0.90 | 18% -> 73% |
 | shape | 0.84 | 0.94 | 50% -> 100% |
 | first-order | 0.01 | 0.97 | 25% -> 88% |
+| texture (glcm) | 0.00 | 0.85 | 0% -> 50% |
 
 every collapsed first-order feature comes back above 0.85 (energy 0.005 -> 0.95, mean
-0.03 -> 1.00; stddev recovers to 0.85 but is flagged low-signal, see the caveat below).
-this is the actionable half: the pipeline doesn't just flag unstable features, it shows a
-one-line preprocessing fix that restores them (the floor is `features.hu_floor` in the
-config).
+0.03 -> 1.00; stddev recovers to 0.85 but is flagged low-signal, see the caveat below). the
+**10 glcm texture features collapse the same way** (raw icc ~0, since the leaked -800 hu air
+dominates the co-occurrence matrix) and recover too, but less completely (median 0.85, only
+half clear the line) which previews their greater fragility on real readers in part 2. this is
+the actionable half: the pipeline doesn't just flag unstable features, it shows a one-line
+preprocessing fix that restores them (the floor is `features.hu_floor` in the config).
 
-![raw vs floored ICC per feature: every first-order feature that collapsed under the raw +/-1 voxel perturbation (open circles near zero) recovers above the 0.85 good-reliability line once a -300 HU floor excludes the leaked air (filled circles), while the already-robust upper-percentile features barely move and the shape features recover modestly](docs/figures/parenchyma_floor_recovery.png)
+![raw vs floored ICC for all 22 features: the first-order and glcm texture features that collapsed under the raw +/-1 voxel perturbation (open circles near zero) recover above the 0.85 good-reliability line once a -300 HU floor excludes the leaked air (filled circles), while the already-robust upper-percentile and shape features barely move](docs/figures/parenchyma_floor_recovery.png)
 
 *regenerate with `python scripts/make_figures.py` (numpy + matplotlib, ~3s, fixed seed).*
 
@@ -154,14 +157,14 @@ radiologists turn out to agree *far* more than this proxy). icc is reported per 
 as a single family average, because the families are bimodal (the first-order split above
 would otherwise vanish into a meaningless "moderate" mean).
 
-one feature, stddev, is flagged **low-signal** (the asterisk in the figure): every
-synthetic nodule is built with the same internal noise level, so stddev barely varies
-across cases (range 23 to 26) and its icc, recovered or not, has almost nothing to be
-reproducible *about*. the pipeline flags it with a heuristic guard (between-case spread
-under `min_snr` times the within-case spread, `reproducibility.feature_reproducibility`),
-the same kind of degeneracy check project 1 needed when a normalization choice made
-first-order features near-constant. real lung ct, where nodule heterogeneity genuinely
-varies, gives stddev a real signal and a trustworthy icc.
+stddev and several glcm features are flagged **low-signal** (the asterisks in the figure):
+every synthetic nodule is built with the same internal noise, so these features barely vary
+across the cohort (stddev ranges only 23 to 26) and their icc, recovered or not, has almost
+nothing to be reproducible *about*. the pipeline flags any feature whose between-case spread is
+under `min_snr` times its within-case spread (`reproducibility.feature_reproducibility`), the
+same kind of degeneracy check project 1 needed when a normalization choice made first-order
+features near-constant. real lung ct, where nodule texture and heterogeneity genuinely vary,
+gives these features a real signal and a trustworthy icc.
 
 ## results, part 2: real lidc-idri (the validation)
 
@@ -256,7 +259,7 @@ failed segmentation should be *flagged*, never silently averaged into a biomarke
 src/seg_radiomics/
 ├── seg_metrics.py      # dice, iou, confusion, sensitivity/precision
 ├── morphology.py       # numpy erosion / surface / connected components
-├── features.py         # radiomics-lite (pyradiomics-compatible names)
+├── features.py         # radiomics-lite: shape + first-order + glcm texture (pyradiomics names)
 ├── correlation.py      # pearson r + auc + spearman volume-confound check
 ├── reproducibility.py  # feature icc(2,1) under mask perturbation, raw + parenchyma-floored
 ├── qc.py               # case-level quality control + report
