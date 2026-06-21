@@ -130,8 +130,8 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
     return rows
 
 
-def summarize_reproducibility(rows) -> dict:
-    """median icc and percent of features with icc > 0.85, per family and overall"""
+def summarize_reproducibility(rows, threshold: float = 0.85) -> dict:
+    """median icc and percent of features with icc > threshold, per family and overall"""
     buckets: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         buckets[r["fclass"]].append(r["icc"])
@@ -142,6 +142,64 @@ def summarize_reproducibility(rows) -> dict:
         out[fam] = {
             "n": int(arr.size),
             "median_icc": round(float(np.nanmedian(arr)), 3),
-            "pct_icc_gt_0.85": round(100.0 * float(np.mean(arr > 0.85)), 1),
+            "pct_pass": round(100.0 * float(np.mean(arr > threshold)), 1),
+            "threshold": threshold,
         }
     return out
+
+
+def interobserver_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), n_raters=4, hu_floor=None,
+                                  min_voxels=8, min_snr=3.0):
+    """per-feature icc(2,1) across the individual radiologist masks of each nodule
+
+    the real inter-observer counterpart to feature_reproducibility: instead of perturbing one
+    mask with erode/dilate, it treats the up to four lidc radiologist annotations as the raters.
+    a nodule is used only if it carries at least n_raters masks (a balanced k=n_raters icc) and
+    the first n_raters are taken; hu_floor applies the parenchyma floor. each case needs an
+    "image" crop and a "rater_masks" list aligned to it (the consensus() per-annotation masks).
+    returns (rows, n_nodules_used)
+    """
+    tuples: list[list[dict]] = []
+    for case in cohort:
+        masks = case.get("rater_masks")
+        if not masks or len(masks) < n_raters:
+            continue
+        img = np.asarray(case["image"])
+        keep = (img >= hu_floor) if hu_floor is not None else None
+        sp = tuple(case.get("spacing", spacing))
+        feats, ok = [], True
+        for m in masks[:n_raters]:
+            mm = np.asarray(m) > 0
+            if keep is not None:
+                mm = mm & keep
+            if mm.sum() < min_voxels:
+                ok = False
+                break
+            try:
+                feats.append(extract_features(img, mm, sp))
+            except ValueError:
+                ok = False
+                break
+        if ok:
+            tuples.append(feats)
+
+    rows = []
+    for name in FEATURE_NAMES:
+        mat = np.array([[f[name] for f in tup] for tup in tuples], float)
+        if mat.size == 0:
+            continue
+        ok = np.isfinite(mat).all(axis=1)
+        if ok.sum() < 3:
+            continue
+        mat = mat[ok]
+        between = mat[:, 0].std()
+        within = (mat - mat.mean(axis=1, keepdims=True)).std()
+        snr = float(between / (within + 1e-12))
+        rows.append({
+            "feature": name,
+            "fclass": feature_class(name),
+            "icc": icc_2_1(mat),                    # agreement across the real radiologist masks
+            "snr": snr,
+            "low_signal": bool(snr < min_snr),
+        })
+    return rows, len(tuples)

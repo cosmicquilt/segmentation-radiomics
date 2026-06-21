@@ -21,6 +21,8 @@ segmentation:
 features:
   extractor: lite           # lite | pyradiomics
   use_gt_mask: true         # features from gt consensus mask -> honest feature<->malignancy correlation
+  hu_floor: -300.0          # parenchyma exclusion (the IBSI resegmentation range) for the floored pass
+  n_raters: 4               # radiologist masks per nodule for the real inter-observer ICC (lidc has up to 4)
 
 output:
   dir: results/lidc

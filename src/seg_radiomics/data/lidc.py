@@ -114,7 +114,9 @@ def build_lidc_cohort(
         for annotations in scan.cluster_annotations():
             if len(annotations) < min_annotations:
                 continue
-            cmask, cbbox, _ = consensus(
+            # consensus also returns the individual radiologist masks (3rd value), all aligned
+            # to cbbox, which feed the real inter-observer reproducibility analysis
+            cmask, cbbox, rater_masks = consensus(
                 annotations, clevel=clevel, pad=[(pad, pad), (pad, pad), (pad, pad)]
             )
             malignancy = float(np.median([a.malignancy for a in annotations]))
@@ -124,6 +126,7 @@ def build_lidc_cohort(
                 {
                     "image": np.asarray(volume[cbbox], dtype=np.float32),
                     "mask": np.asarray(cmask, dtype=bool),
+                    "rater_masks": [np.asarray(m, dtype=bool) for m in rater_masks],
                     "label": int(malignancy > malignant_threshold),
                     "malignancy": malignancy,
                     "spacing": spacing,

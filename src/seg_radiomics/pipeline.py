@@ -106,6 +106,22 @@ def run_pipeline(cfg: dict) -> dict:
     repro_rows_floored = feature_reproducibility(cohort, spacing=default_spacing, use_gt=True, hu_floor=hu_floor)
     reproducibility_floored = summarize_reproducibility(repro_rows_floored)
 
+    # real inter-observer reproducibility when per-rater masks are present (lidc), the gold
+    # standard that replaces the +/-1 voxel proxy with the actual radiologist disagreement
+    from .reproducibility import interobserver_reproducibility
+    n_raters = feat_cfg.get("n_raters", 4)
+    interobserver = interobserver_floored = None
+    io_rows = io_n = 0
+    if any(len(c.get("rater_masks") or []) >= n_raters for c in cohort):
+        io_rows, io_n = interobserver_reproducibility(cohort, spacing=default_spacing, n_raters=n_raters)
+        io_rows_fl, _ = interobserver_reproducibility(cohort, spacing=default_spacing,
+                                                      n_raters=n_raters, hu_floor=hu_floor)
+        interobserver = summarize_reproducibility(io_rows, threshold=0.75)
+        interobserver_floored = summarize_reproducibility(io_rows_fl, threshold=0.75)
+
+    # nodules cluster within patients, surfaced so the univariate stats are read honestly
+    patients = {c.get("scan_id") for c in cohort if c.get("scan_id")}
+
     results = {
         "source": data_cfg.get("source", "synthetic"),
         "features_from": "ground_truth" if use_gt else "prediction",
@@ -121,6 +137,11 @@ def run_pipeline(cfg: dict) -> dict:
         "hu_floor": hu_floor,
         "reproducibility_floored": reproducibility_floored,
         "reproducibility_per_feature_floored": repro_rows_floored,
+        "n_patients": len(patients) if patients else None,
+        "n_raters": n_raters,
+        "interobserver": interobserver,
+        "interobserver_floored": interobserver_floored,
+        "interobserver_n_nodules": io_n,
         "qc": report.summary(),
     }
     logger.info("%s", results["qc"])
@@ -145,6 +166,9 @@ def format_results(results: dict, top_k: int = 5) -> str:
         "| feature | Pearson r | AUC |",
         "|---|---|---|",
     ]
+    if results.get("n_patients"):
+        lines.insert(2, f"clustering: {results['n_kept']} nodules from {results['n_patients']} patients "
+                     "(not independent, the univariate stats below are not cluster-corrected)")
     for name, stats in list(results["correlations"].items())[:top_k]:
         lines.append(f"| {name} | {stats['pearson_r']:+.3f} | {stats['auc']:.3f} |")
 
@@ -158,13 +182,29 @@ def format_results(results: dict, top_k: int = 5) -> str:
         for fam in ("ALL", "shape", "firstorder"):
             if fam in repro:
                 s, f = repro[fam], floored.get(fam, {})
-                fm, fp = f.get("median_icc", float("nan")), f.get("pct_icc_gt_0.85", float("nan"))
+                fm, fp = f.get("median_icc", float("nan")), f.get("pct_pass", float("nan"))
                 lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {fm:.3f} | "
-                             f"{s['pct_icc_gt_0.85']:.0f}% -> {fp:.0f}% |")
+                             f"{s['pct_pass']:.0f}% -> {fp:.0f}% |")
         low = [r["feature"] for r in results.get("reproducibility_per_feature_floored", [])
                if r.get("low_signal")]
         if low:
             lines.append(f"low-signal (icc ill-conditioned, near-constant across cases): {', '.join(low)}")
+
+    io = results.get("interobserver") or {}
+    io_fl = results.get("interobserver_floored") or {}
+    if io:
+        n, k = results.get("interobserver_n_nodules", 0), results.get("n_raters", 4)
+        hf = results.get("hu_floor", -300.0)
+        lines += ["", f"REAL inter-observer reproducibility: ICC(2,1) across {k} radiologist masks "
+                  f"(n={n} nodules drawn by all {k}, raw -> {hf:.0f} HU floor):",
+                  "| family | median ICC raw | median ICC floored | % ICC>0.75 (raw -> floored) |",
+                  "|---|---|---|---|"]
+        for fam in ("ALL", "shape", "firstorder"):
+            if fam in io:
+                s, f = io[fam], io_fl.get(fam, {})
+                fm, fp = f.get("median_icc", float("nan")), f.get("pct_pass", float("nan"))
+                lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {fm:.3f} | "
+                             f"{s['pct_pass']:.0f}% -> {fp:.0f}% |")
 
     vc = results.get("volume_confound", {})
     flagged = [n for n, st in vc.items() if st["volume_proxy"]]

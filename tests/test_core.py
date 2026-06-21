@@ -166,3 +166,26 @@ def test_low_signal_guard_flags_near_constant_feature():
     # on this cohort the guard flags stddev and not mean; the flag is just snr < min_snr
     assert rows["firstorder_StdDev"]["low_signal"]
     assert not rows["firstorder_Mean"]["low_signal"]
+
+
+def test_interobserver_reproducibility_structure():
+    rng = np.random.default_rng(0)
+    zz, yy, xx = np.mgrid[0:24, 0:28, 0:28]
+    cohort = []
+    for i in range(8):
+        rad = 5 + i  # radius varies across nodules -> between-case variance for shape
+        base = (zz - 12) ** 2 + (yy - 14) ** 2 + (xx - 14) ** 2 <= rad ** 2
+        img = rng.normal(0.0, 1.0, base.shape).astype(np.float32)
+        img[base] += 40.0 + i * 4  # intensity varies across nodules too
+        # 4 "radiologist" masks = the same nodule drawn with different boundaries
+        masks = [base, erode(base), reproducibility.dilate(base), erode(erode(base))]
+        cohort.append({"image": img, "mask": base, "rater_masks": masks, "label": i % 2})
+    rows, n = reproducibility.interobserver_reproducibility(cohort, n_raters=4)
+    by = {r["feature"]: r["icc"] for r in rows}
+    assert n == 8 and rows
+    # mean intensity varies across nodules and the 4 boundaries agree on it -> finite, high icc
+    assert np.isfinite(by["firstorder_Mean"]) and by["firstorder_Mean"] > 0.5
+    # a nodule with fewer than n_raters masks is skipped
+    _, n2 = reproducibility.interobserver_reproducibility(
+        [{"image": cohort[0]["image"], "rater_masks": cohort[0]["rater_masks"][:2]}], n_raters=4)
+    assert n2 == 0
