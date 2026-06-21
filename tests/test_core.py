@@ -189,3 +189,17 @@ def test_interobserver_reproducibility_structure():
     _, n2 = reproducibility.interobserver_reproducibility(
         [{"image": cohort[0]["image"], "rater_masks": cohort[0]["rater_masks"][:2]}], n_raters=4)
     assert n2 == 0
+
+
+def test_rater_mask_agreement_dice():
+    img = np.full((16, 20, 20), 100.0, np.float32)  # all >= -300, so the floor is a no-op here
+    base = np.zeros((16, 20, 20), bool)
+    base[6:12, 8:14, 8:14] = True
+    # identical raters -> mean pairwise dice 1.0 (the degenerate case the check exists to catch)
+    d_same, n = reproducibility.rater_mask_agreement(
+        [{"image": img, "rater_masks": [base, base, base, base]}], n_raters=4)
+    assert n == 1 and abs(d_same - 1.0) < 1e-6
+    # distinct raters (erode / dilate) -> dice below 1.0
+    d_diff, _ = reproducibility.rater_mask_agreement(
+        [{"image": img, "rater_masks": [base, erode(base), reproducibility.dilate(base), base]}], n_raters=4)
+    assert d_diff < 0.99

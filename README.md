@@ -189,7 +189,24 @@ exactly as expected. second, **real radiologists agree far more than the proxy i
 (median icc 0.92 vs the proxy's 0.55): a uniform one-voxel erode/dilate is a deliberately
 harsh stand-in, so it *under*-states real reproducibility. the proxy earns its keep because
 the *qualitative* findings (shape > first-order, the floor helping, which features are robust)
-replicate on the real readers, and the floor still lifts everything to ~0.99.
+replicate on the real readers, and the floor still lifts everything to ~0.99 (read with the
+degeneracy check below).
+
+**caveats on the inter-observer result** (flagged by a radiomics review):
+
+- **selection bias.** n=54 is the nodules *all four* radiologists drew, which are the larger,
+  more conspicuous ones and inherently easier to delineate consistently. so this icc is an upper
+  bound, inflated relative to the full nodule distribution; pairwise icc across whichever readers
+  annotated each nodule, or a staple consensus, would be less biased.
+- **the floored ~0.99 needs a degeneracy check.** if the -300 hu floor strips the fuzzy margins
+  where readers disagree and leaves the same dense core, the four masks become near-identical and
+  the floored icc is tautological (identical masks -> identical features). the pipeline now reports
+  the **mean pairwise dice across the four masks, raw vs floored** (the `rater mask agreement`
+  line): floored dice approaching 1.0 means the gain is an artifact, dice well below 1.0 means the
+  icc is a real stability result.
+- **the proxy is conservative about magnitude, not every error mode.** a uniform erode/dilate
+  over-states *net volume and boundary leakage*, but it does not reproduce the localized,
+  shape-distorting topological mistakes real readers make.
 
 **2. feature vs malignancy, with three caveats that matter.** nodule **size** is the strongest
 predictor of the malignancy rating:

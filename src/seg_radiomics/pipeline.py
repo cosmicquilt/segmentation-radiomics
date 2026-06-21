@@ -108,16 +108,21 @@ def run_pipeline(cfg: dict) -> dict:
 
     # real inter-observer reproducibility when per-rater masks are present (lidc), the gold
     # standard that replaces the +/-1 voxel proxy with the actual radiologist disagreement
-    from .reproducibility import interobserver_reproducibility
+    from .reproducibility import interobserver_reproducibility, rater_mask_agreement
     n_raters = feat_cfg.get("n_raters", 4)
     interobserver = interobserver_floored = None
-    io_rows = io_n = 0
+    io_n = 0
+    io_dice_raw = io_dice_floored = None
     if any(len(c.get("rater_masks") or []) >= n_raters for c in cohort):
         io_rows, io_n = interobserver_reproducibility(cohort, spacing=default_spacing, n_raters=n_raters)
         io_rows_fl, _ = interobserver_reproducibility(cohort, spacing=default_spacing,
                                                       n_raters=n_raters, hu_floor=hu_floor)
         interobserver = summarize_reproducibility(io_rows, threshold=0.75)
         interobserver_floored = summarize_reproducibility(io_rows_fl, threshold=0.75)
+        # degeneracy check: if the floor collapses the contours (dice -> 1.0), the floored icc
+        # is tautological (identical masks -> identical features) not a real stability gain
+        io_dice_raw, _ = rater_mask_agreement(cohort, n_raters=n_raters)
+        io_dice_floored, _ = rater_mask_agreement(cohort, n_raters=n_raters, hu_floor=hu_floor)
 
     # nodules cluster within patients, surfaced so the univariate stats are read honestly
     patients = {c.get("scan_id") for c in cohort if c.get("scan_id")}
@@ -142,6 +147,8 @@ def run_pipeline(cfg: dict) -> dict:
         "interobserver": interobserver,
         "interobserver_floored": interobserver_floored,
         "interobserver_n_nodules": io_n,
+        "interobserver_dice_raw": io_dice_raw,
+        "interobserver_dice_floored": io_dice_floored,
         "qc": report.summary(),
     }
     logger.info("%s", results["qc"])
@@ -205,6 +212,13 @@ def format_results(results: dict, top_k: int = 5) -> str:
                 fm, fp = f.get("median_icc", float("nan")), f.get("pct_pass", float("nan"))
                 lines.append(f"| {fam} (n={s['n']}) | {s['median_icc']:.3f} | {fm:.3f} | "
                              f"{s['pct_pass']:.0f}% -> {fp:.0f}% |")
+        dr, df = results.get("interobserver_dice_raw"), results.get("interobserver_dice_floored")
+        if dr is not None:
+            verdict = ("floor collapses the contours, the floored ICC is largely tautological"
+                       if (df or 0) >= 0.97 else
+                       "contours stay distinct, the floored ICC is a real stability gain")
+            lines.append(f"rater mask agreement (mean pairwise Dice across {k}): "
+                         f"raw {dr:.3f} -> floored {df:.3f}  ({verdict})")
 
     vc = results.get("volume_confound", {})
     flagged = [n for n, st in vc.items() if st["volume_proxy"]]

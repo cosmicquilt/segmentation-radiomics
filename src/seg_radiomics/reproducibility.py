@@ -130,6 +130,33 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
     return rows
 
 
+def rater_mask_agreement(cohort, n_raters=4, hu_floor=None, min_voxels=8):
+    """mean pairwise dice across each nodule's radiologist masks (raw, or after hu_floor)
+
+    the degeneracy check for the floored inter-observer icc: if the floor collapses the
+    n_raters distinct contours onto the same dense core, their dice approaches 1.0, which makes
+    a near-perfect floored icc tautological (identical masks -> identical features) rather than
+    a real stability gain. returns (mean_dice, n_nodules)
+    """
+    import itertools
+
+    from .seg_metrics import dice
+
+    vals = []
+    for case in cohort:
+        masks = case.get("rater_masks")
+        if not masks or len(masks) < n_raters:
+            continue
+        ms = [np.asarray(m) > 0 for m in masks[:n_raters]]
+        if hu_floor is not None:
+            keep = np.asarray(case["image"]) >= hu_floor
+            ms = [m & keep for m in ms]
+        if any(m.sum() < min_voxels for m in ms):
+            continue
+        vals.append(float(np.mean([dice(a, b) for a, b in itertools.combinations(ms, 2)])))
+    return (float(np.mean(vals)) if vals else float("nan")), len(vals)
+
+
 def summarize_reproducibility(rows, threshold: float = 0.85) -> dict:
     """median icc and percent of features with icc > threshold, per family and overall"""
     buckets: dict[str, list[float]] = defaultdict(list)
