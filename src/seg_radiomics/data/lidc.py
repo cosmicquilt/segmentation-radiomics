@@ -34,8 +34,10 @@ def _require_pylidc():
     # numpy 1.24 / 2.0, e.g. np.int in Contour.to_matrix, np.bool in the mask builders)
     if not hasattr(configparser, "SafeConfigParser"):
         configparser.SafeConfigParser = configparser.ConfigParser
+    # note: skip np.object / np.str, probing them emits a futurewarning and pylidc does not
+    # need them (the run gets through cluster_annotations + consensus without them)
     for _name, _builtin in (("int", int), ("float", float), ("bool", bool),
-                            ("object", object), ("str", str), ("long", int), ("complex", complex)):
+                            ("long", int), ("complex", complex)):
         if not hasattr(np, _name):
             setattr(np, _name, _builtin)
     try:
