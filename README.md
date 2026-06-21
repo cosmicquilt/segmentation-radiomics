@@ -189,8 +189,8 @@ exactly as expected. second, **real radiologists agree far more than the proxy i
 (median icc 0.92 vs the proxy's 0.55): a uniform one-voxel erode/dilate is a deliberately
 harsh stand-in, so it *under*-states real reproducibility. the proxy earns its keep because
 the *qualitative* findings (shape > first-order, the floor helping, which features are robust)
-replicate on the real readers, and the floor still lifts everything to ~0.99 (read with the
-degeneracy check below).
+replicate on the real readers, and the floor still lifts everything to ~0.99 (which survives
+the degeneracy check below).
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
@@ -198,12 +198,13 @@ degeneracy check below).
   more conspicuous ones and inherently easier to delineate consistently. so this icc is an upper
   bound, inflated relative to the full nodule distribution; pairwise icc across whichever readers
   annotated each nodule, or a staple consensus, would be less biased.
-- **the floored ~0.99 needs a degeneracy check.** if the -300 hu floor strips the fuzzy margins
-  where readers disagree and leaves the same dense core, the four masks become near-identical and
-  the floored icc is tautological (identical masks -> identical features). the pipeline now reports
-  the **mean pairwise dice across the four masks, raw vs floored** (the `rater mask agreement`
-  line): floored dice approaching 1.0 means the gain is an artifact, dice well below 1.0 means the
-  icc is a real stability result.
+- **the floored ~0.99 survives a degeneracy check.** if the -300 hu floor merely stripped the
+  fuzzy margins where readers disagree and left the same dense core, the four masks would become
+  identical and the floored icc would be tautological (identical masks -> identical features). so
+  the pipeline reports the **mean pairwise dice across the four masks**: it is **0.785 raw -> 0.935
+  floored**. the floor does tighten agreement (it drops some disagreed-upon low-hu margin), but the
+  masks stay distinct (0.935, not ~1.0), so the near-perfect feature icc is genuine robustness, not
+  identical inputs. (the raw inter-rater dice ~0.79 is itself right in the published lidc range.)
 - **the proxy is conservative about magnitude, not every error mode.** a uniform erode/dilate
   over-states *net volume and boundary leakage*, but it does not reproduce the localized,
   shape-distorting topological mistakes real readers make.
