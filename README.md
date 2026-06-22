@@ -40,15 +40,16 @@ segmenter is the main piece still to swap in:
 
 **what's done vs left.** the lidc-idri path now runs end-to-end (loader `data/lidc.py`,
 `configs/lidc.yaml`): real consensus masks, the radiologist malignancy rating as the label,
-and the 4-radiologist inter-observer reproducibility, all in the real-data results below.
-**still on the build plan:** (1) train the monai u-net to replace the threshold baseline
-(dice 0.47 on real ct is weak by design); (2) swap radiomics-lite for **pyradiomics** texture
-families (glcm/glrlm) under a **fixed 25 hu bin width** (not a fixed bin count, so a gray
-level means the same thing across patients) for ibsi compliance; (3) cluster-robust or
-mixed-effects stats, since nodules cluster within patients; (4) validate the malignancy
-correlation on lidc's ~157-case **pathology-confirmed** subset, not just the subjective
-rating. a stochastic contour perturbation, small-nodule icc stratification, and combat /
-nested-combat harmonization round out the list. then stop, no radiogenomics (scope creep).
+the 4-radiologist inter-observer reproducibility, and a **glcm texture family** (fixed 25 hu
+bin width), all in the real-data results below. **still on the build plan:** (1) train the
+monai u-net to replace the threshold baseline (dice 0.47 on real ct is weak by design); (2) a
+**larger, texturally-varied cohort** to pin texture reproducibility (the glcm features are
+low-signal on the current small subset) plus the remaining **pyradiomics** families
+(glrlm/glszm/ngtdm); (3) cluster-robust or mixed-effects stats, since nodules cluster within
+patients; (4) validate the malignancy correlation on lidc's ~157-case **pathology-confirmed**
+subset, not just the subjective rating. a stochastic contour perturbation, small-nodule icc
+stratification, and combat / nested-combat harmonization round out the list. then stop, no
+radiogenomics (scope creep).
 see `scripts/download_data.md`.
 
 ## quickstart
@@ -180,20 +181,33 @@ method holds, and the proxy turns out to have been pessimistic:
 
 | family | median ICC raw | median ICC floored | % ICC > 0.75 (raw -> floored) |
 |---|---|---|---|
-| all 12 | 0.92 | 0.99 | 75% -> 92% |
+| all 22 | 0.91 | 0.99 | 77% -> 91% |
 | shape | 0.95 | 0.99 | 100% -> 100% |
 | first-order | 0.84 | 0.99 | 62% -> 88% |
+| texture (glcm) * | 0.89 | 0.99 | 80% -> 90% |
 
-![grouped bars of median ICC by feature family: the four-radiologist inter-observer bars sit far above the +/-1 voxel proxy bars at every family, and the -300 HU floor lifts both to near 1.0; 75 percent of features clear ICC 0.75 raw, shape higher than first-order](docs/figures/lidc_interobserver.png)
+![grouped bars of median ICC by feature family (all, shape, first-order, texture): the four-radiologist inter-observer bars sit far above the +/-1 voxel proxy bars at every family, and the -300 HU floor lifts both to near 1.0; 77 percent of features clear ICC 0.75 raw, shape highest, texture flagged low-signal on this subset](docs/figures/lidc_interobserver.png)
 
-two honest reads. first, **75% of features clear icc 0.75 raw** (shape 100%, first-order 62%),
+two honest reads. first, **77% of features clear icc 0.75 raw** (shape 100%, first-order 62%),
 right in the published lidc inter-observer range (~60-85%), with shape beating first-order
 exactly as expected. second, **real radiologists agree far more than the proxy implied**
-(median icc 0.92 vs the proxy's 0.55): a uniform one-voxel erode/dilate is a deliberately
+(median icc 0.91 vs the proxy's 0.47): a uniform one-voxel erode/dilate is a deliberately
 harsh stand-in, so it *under*-states real reproducibility. the proxy earns its keep because
 the *qualitative* findings (shape > first-order, the floor helping, which features are robust)
 replicate on the real readers, and the floor still lifts everything to ~0.99 (which survives
 the degeneracy check below).
+
+**texture is the exception worth dwelling on.** the 10 glcm features are by far the *most*
+fragile under the proxy (median icc 0.36, lowest of any family, matching the literature's view
+of texture as boundary-sensitive) yet look robust under the real readers (0.89). but the
+low-signal guard fires on **8 of the 10** (in the perturbation analysis over all 109 nodules):
+across this small, homogeneous subset the texture features barely vary between nodules, so their
+iccs (here and in the inter-observer set) are ill-conditioned (the asterisk in the table and
+figure). so the honest read is not "texture is reproducible" but "this cohort is
+too small and texturally uniform to measure texture reproducibility cleanly". the proxy (0.36)
+and the literature say texture is the fragile family; pinning the real number needs a larger,
+texturally varied cohort. the guard catching this, rather than the pipeline reporting a
+confident 0.89, is the point.
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
@@ -281,6 +295,7 @@ tests/     test_core.py
 **verified end-to-end on both synthetic data and real lidc-idri.** the synthetic phantom
 develops the method (floor recovery, volume-confound, the low-signal guard, all unit-tested,
 exit-0); the real lidc run validates it (109 nodules / 32 patients, 4-radiologist
-inter-observer reproducibility median icc 0.92 raw -> 0.99 floored, matching the published
-range). next: train the monai segmenter to replace the dice-0.47 threshold baseline, add
-pyradiomics texture under a fixed bin width, and cluster-robust stats (build plan above).
+inter-observer reproducibility median icc 0.91 raw -> 0.99 floored, matching the published
+range; a glcm texture family is in but flagged low-signal on this small subset). next: train
+the monai segmenter to replace the dice-0.47 threshold baseline, a larger texturally-varied
+cohort to pin texture reproducibility, and cluster-robust stats (build plan above).

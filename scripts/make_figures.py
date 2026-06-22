@@ -115,7 +115,7 @@ def real_lidc_figure() -> None:
     import json
 
     def medians(summary):
-        return [summary[f]["median_icc"] for f in ("ALL", "shape", "firstorder")]
+        return [summary[f]["median_icc"] for f in ("ALL", "shape", "firstorder", "texture")]
 
     rj = Path(__file__).resolve().parents[1] / "results" / "lidc" / "results.json"
     if rj.exists() and json.loads(rj.read_text()).get("interobserver"):
@@ -124,11 +124,11 @@ def real_lidc_figure() -> None:
         real_raw, real_flo = medians(r["interobserver"]), medians(r["interobserver_floored"])
         n_nod, n_pat = r.get("interobserver_n_nodules", "?"), r.get("n_patients", "?")
     else:
-        proxy_raw, proxy_flo = [0.549, 0.769, 0.458], [0.897, 0.904, 0.815]
-        real_raw, real_flo = [0.922, 0.954, 0.841], [0.990, 0.990, 0.990]
+        proxy_raw, proxy_flo = [0.474, 0.769, 0.458, 0.355], [0.725, 0.904, 0.815, 0.612]
+        real_raw, real_flo = [0.914, 0.954, 0.841, 0.892], [0.990, 0.990, 0.990, 0.990]
         n_nod, n_pat = 54, 32
 
-    fams = ["all 12", "shape", "first-order"]
+    fams = ["all 22", "shape", "first-order", "texture *"]
     x = np.arange(len(fams))
     w = 0.2
     series = [
@@ -150,9 +150,13 @@ def real_lidc_figure() -> None:
     ax.set_title("real radiologists agree far more than the +/-1 voxel proxy\n"
                  f"lidc inter-observer reproducibility, n={n_nod} nodules / {n_pat} patients",
                  fontsize=11)
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.22), ncol=2, fontsize=8, frameon=False)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.20), ncol=2, fontsize=8, frameon=False)
     ax.grid(axis="y", ls=":", color="#dddddd")
     ax.set_axisbelow(True)
+    ax.annotate("* texture features are near-constant across this small homogeneous subset (low-signal), so their "
+                "ICCs are ill-conditioned, read as indicative only",
+                xy=(0.5, -0.30), xycoords="axes fraction", ha="center", va="top",
+                fontsize=7, color="#555555", style="italic")
 
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     out = FIG_DIR / "lidc_interobserver.png"
