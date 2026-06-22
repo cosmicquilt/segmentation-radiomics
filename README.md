@@ -215,8 +215,23 @@ so their iccs are ill-conditioned no matter how much data is added. the honest r
 two-part: the signal-bearing texture features are reproducibly delineated, but the low-variance
 half is a structural property of this 10-feature lite glcm on lidc, not a sample-size problem.
 settling "stable vs underpowered" is exactly what the sweep is for, which is why the family median
-is reported next to its low-signal count rather than alone. (under the aggressive proxy texture is
-still the most fragile family, so the conservative reading stands.)
+is reported next to its low-signal count rather than alone.
+
+**why this is defensible, and where it stops.** the ordering is mechanically sound *here*: a
+whole-roi glcm is anchored by the stable dense core, so a one-voxel boundary change moves only a
+small fraction of its voxel pairs, whereas first-order min/max/mean flip the instant a rater
+includes one stray air or bone voxel. the structural low-variance is the known glcm
+redundancy-plus-discretization effect: solid nodules span a narrow hu range, so fixed 25 hu bins
+yield only ~4-5 gray levels and a tiny co-occurrence matrix where several haralick features hit a
+ceiling. two limits keep the claim honest: it is **glcm-only** (full pyradiomics adds glrlm/glszm
+run-length and size-zone features, which truncate at boundary disagreements and would likely pull
+the texture median back below first-order), and the 4-rater nodules are the conspicuous **solid**
+ones (ground-glass and part-solid nodules have fuzzy borders that would tank texture icc). so the
+reviewer-safe statement is narrow: *in solid lidc nodules, whole-roi glcm features are highly
+robust to inter-observer boundary disagreement (icc ~0.89), beating first-order extremum
+statistics, but the narrow hu range and fixed 25 hu bins leave ~half the glcm features structurally
+low-variance and redundant.* the +/-1 voxel proxy (0.36) is then the systematic boundary
+stress-test, the algorithmic worst case, not the clinical number.
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
