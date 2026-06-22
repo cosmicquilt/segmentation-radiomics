@@ -140,8 +140,9 @@ def partial_correlation(feature_table: dict[str, list], labels: list,
     asks the question the size-circularity caveat is really about: does a feature predict the
     outcome *beyond lesion size*? the partial correlation r(f,y|v) = (r_fy - r_fv*r_yv) /
     sqrt((1-r_fv^2)(1-r_yv^2)) removes the size-mediated part, so a feature that only predicted
-    through size collapses toward 0. returns {feature: {partial_r, raw_r, vol_r}} sorted by
-    descending |partial_r|, excluding the control feature itself
+    through size collapses toward 0. shape features are excluded (they are size/geometry by
+    construction), so the candidates are intensity and texture features. returns
+    {feature: {partial_r, raw_r, vol_r}} sorted by descending |partial_r|
     """
     if control_key not in feature_table:
         return {}
@@ -149,7 +150,9 @@ def partial_correlation(feature_table: dict[str, list], labels: list,
     v = np.asarray(feature_table[control_key], dtype=np.float64)
     out = {}
     for name, vals in feature_table.items():
-        if name == control_key:
+        # shape features are nonlinear size/geometry transforms (diameter ~ volume^1/3), so
+        # "size-independent" is malformed for them; the meaningful candidates are intensity/texture
+        if name == control_key or name.startswith("shape_"):
             continue
         f = np.asarray(vals, dtype=np.float64)
         ok = np.isfinite(f) & np.isfinite(v) & np.isfinite(y)
@@ -157,7 +160,7 @@ def partial_correlation(feature_table: dict[str, list], labels: list,
             continue
         r_fy, r_fv, r_yv = pearson(f[ok], y[ok]), pearson(f[ok], v[ok]), pearson(y[ok], v[ok])
         if (1 - r_fv**2) < 0.02:
-            continue  # feature is essentially volume itself (e.g. equivalentdiameter), partial r undefined
+            continue  # feature is essentially volume itself, partial r undefined
         denom = np.sqrt(max((1 - r_fv**2) * (1 - r_yv**2), 1e-12))
         out[name] = {
             "partial_r": float((r_fy - r_fv * r_yv) / denom),

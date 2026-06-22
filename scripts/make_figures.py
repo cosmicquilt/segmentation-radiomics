@@ -110,7 +110,7 @@ def real_lidc_figure() -> None:
     """proxy vs real-radiologist reproducibility on lidc, by feature family
 
     regenerates from results/lidc/results.json when a real lidc run is present (colab),
-    otherwise uses the snapshot from the n=54 nodule / 32 patient run (commit ba566e3)
+    otherwise uses the snapshot from the n=311 four-rater nodule / 280 patient run
     """
     import json
 
@@ -124,9 +124,9 @@ def real_lidc_figure() -> None:
         real_raw, real_flo = medians(r["interobserver"]), medians(r["interobserver_floored"])
         n_nod, n_pat = r.get("interobserver_n_nodules", "?"), r.get("n_patients", "?")
     else:
-        proxy_raw, proxy_flo = [0.484, 0.811, 0.480, 0.405], [0.729, 0.931, 0.794, 0.625]
-        real_raw, real_flo = [0.895, 0.931, 0.812, 0.895], [0.985, 0.987, 0.985, 0.982]
-        n_nod, n_pat = 181, 136
+        proxy_raw, proxy_flo = [0.519, 0.814, 0.509, 0.439], [0.763, 0.934, 0.815, 0.662]
+        real_raw, real_flo = [0.887, 0.922, 0.815, 0.873], [0.982, 0.980, 0.988, 0.982]
+        n_nod, n_pat = 311, 280
 
     fams = ["all 22", "shape", "first-order", "texture *"]
     x = np.arange(len(fams))
