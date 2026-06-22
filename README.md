@@ -176,33 +176,33 @@ gives these features a real signal and a trustworthy icc.
 the identical pipeline runs on **lidc-idri** lung ct (`configs/lidc.yaml`): the segmentation
 is the **consensus of up to four radiologist annotations** per nodule, the label is the
 radiologists' **malignancy rating (1-5)** binarized at > 3, and the correlation features come
-from the consensus mask. one run on a 32-scan subset gave **109 nodules from 32 patients**.
+from the consensus mask. one run on a 143-scan subset gave **399 nodules from 136 patients**.
 
 **1. real inter-observer reproducibility (the headline).** instead of the synthetic +/-1
 voxel proxy, this treats the **four radiologist masks as four raters** and computes icc(2,1)
-across them (n=54 nodules drawn by all four), the gold-standard inter-observer design. the
+across them (n=181 nodules drawn by all four), the gold-standard inter-observer design. the
 method holds, and the proxy turns out to have been pessimistic:
 
 | family | median ICC raw | median ICC floored | % ICC > 0.75 (raw -> floored) |
 |---|---|---|---|
-| all 22 | 0.91 | 0.99 | 77% -> 91% |
-| shape | 0.95 | 0.99 | 100% -> 100% |
-| first-order | 0.84 | 0.99 | 62% -> 88% |
-| texture (glcm) * | 0.89 | 0.99 | 80% -> 90% |
+| all 22 | 0.90 | 0.99 | 68% -> 91% |
+| shape | 0.93 | 0.99 | 100% -> 100% |
+| first-order | 0.81 | 0.99 | 50% -> 75% |
+| texture (glcm) * | 0.89 | 0.98 | 70% -> 100% |
 
-![grouped bars of median ICC by feature family (all, shape, first-order, texture): the four-radiologist inter-observer bars sit far above the +/-1 voxel proxy bars at every family, and the -300 HU floor lifts both to near 1.0; 77 percent of features clear ICC 0.75 raw, shape highest, texture flagged low-signal on this subset](docs/figures/lidc_interobserver.png)
+![grouped bars of median ICC by feature family (all, shape, first-order, texture): the four-radiologist inter-observer bars sit far above the +/-1 voxel proxy bars at every family, and the -300 HU floor lifts both to near 1.0; 68 percent of features clear ICC 0.75 raw, shape highest, texture flagged low-signal on this subset](docs/figures/lidc_interobserver.png)
 
-two honest reads. first, **77% of features clear icc 0.75 raw** (shape 100%, first-order 62%),
+two honest reads. first, **68% of features clear icc 0.75 raw** (shape 100%, first-order 50%),
 right in the published lidc inter-observer range (~60-85%), with shape beating first-order
 exactly as expected. second, **real radiologists agree far more than the proxy implied**
-(median icc 0.91 vs the proxy's 0.47): a uniform one-voxel erode/dilate is a deliberately
+(median icc 0.90 vs the proxy's 0.48): a uniform one-voxel erode/dilate is a deliberately
 harsh stand-in, so it *under*-states real reproducibility. the proxy earns its keep because
 the *qualitative* findings (shape > first-order, the floor helping, which features are robust)
 replicate on the real readers, and the floor still lifts everything to ~0.99 (which survives
 the degeneracy check below).
 
 **texture is the exception worth dwelling on.** the 10 glcm features are by far the *most*
-fragile under the proxy (median icc 0.36, lowest of any family, matching the literature's view
+fragile under the proxy (median icc 0.41, lowest of any family, matching the literature's view
 of texture as boundary-sensitive) yet look robust under the real readers (0.89). to test whether
 that 0.89 was a real estimate or a small-cohort artifact, a **cohort-size sweep**
 (`scripts/cohort_sweep.py`) grew the 4-rater set to **181 nodules** (a larger lidc download) and
@@ -233,21 +233,21 @@ ones (ground-glass and part-solid nodules have fuzzy borders that would tank tex
 reviewer-safe statement is narrow: *in solid lidc nodules, whole-roi glcm features are highly
 robust to inter-observer boundary disagreement (icc ~0.89), beating first-order extremum
 statistics, but the narrow hu range and fixed 25 hu bins leave ~half the glcm features structurally
-low-variance and redundant.* the +/-1 voxel proxy (0.36) is then the systematic boundary
+low-variance and redundant.* the +/-1 voxel proxy (0.41) is then the systematic boundary
 stress-test, the algorithmic worst case, not the clinical number.
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
-- **selection bias.** n=54 is the nodules *all four* radiologists drew, which are the larger,
+- **selection bias.** n=181 is the nodules *all four* radiologists drew, which are the larger,
   more conspicuous ones and inherently easier to delineate consistently. so this icc is an upper
   bound, inflated relative to the full nodule distribution; pairwise icc across whichever readers
   annotated each nodule, or a staple consensus, would be less biased.
 - **the floored ~0.99 survives a degeneracy check.** if the -300 hu floor merely stripped the
   fuzzy margins where readers disagree and left the same dense core, the four masks would become
   identical and the floored icc would be tautological (identical masks -> identical features). so
-  the pipeline reports the **mean pairwise dice across the four masks**: it is **0.785 raw -> 0.935
+  the pipeline reports the **mean pairwise dice across the four masks**: it is **0.785 raw -> 0.929
   floored**. the floor does tighten agreement (it drops some disagreed-upon low-hu margin), but the
-  masks stay distinct (0.935, not ~1.0), so the near-perfect feature icc is genuine robustness, not
+  masks stay distinct (0.929, not ~1.0), so the near-perfect feature icc is genuine robustness, not
   identical inputs. (the raw inter-rater dice ~0.79 is itself right in the published lidc range.)
 - **the proxy is conservative about magnitude, not every error mode.** a uniform erode/dilate
   over-states *net volume and boundary leakage*, but it does not reproduce the localized,
@@ -258,10 +258,10 @@ predictor of the malignancy rating:
 
 | feature | pearson r | auc | spearman w/ volume |
 |---|---|---|---|
-| shape_EquivalentDiameter | +0.72 | 0.94 | +1.00 (definitional) |
-| shape_SurfaceArea | +0.59 | 0.95 | +0.98 (definitional) |
-| shape_VoxelVolume | +0.55 | 0.94 | (size) |
-| shape_Sphericity | -0.52 | 0.15 | -0.72 |
+| shape_EquivalentDiameter | +0.68 | 0.95 | +1.00 (definitional) |
+| shape_SurfaceArea | +0.53 | 0.95 | +0.98 (definitional) |
+| shape_VoxelVolume | +0.45 | 0.95 | (size) |
+| shape_Sphericity | -0.53 | 0.15 | -0.78 |
 
 but that auc must be read against three caveats the pipeline and a radiomics review both flag:
 
@@ -271,15 +271,17 @@ but that auc must be read against three caveats the pipeline and a radiomics rev
   the discovery of an independent biomarker** (the size-only baseline on this label is a
   published auc 0.94-0.97, so this is exactly the expected number).
 - **energy is a size proxy.** the volume-confound check flags `firstorder_Energy` at spearman
-  0.81 with volume, so even where an intensity feature looks predictive it can be size in
+  0.84 with volume, so even where an intensity feature looks predictive it can be size in
   disguise, and is discounted.
-- **nodules cluster within patients** (109 from 32), so the univariate stats are not
+- **nodules cluster within patients** (399 from 136), so the univariate stats are not
   independent. the run accounts for this three ways for the top association: a **patient-clustered
   bootstrap 95% CI** for the auc (`correlation.cluster_bootstrap_auc` resamples patients, not
   nodules), a **cluster-robust logistic regression** (sandwich SEs clustered by patient,
   `stats.cluster_robust_logit`), and a **random-intercept GLMM** (`malignant ~ feature +
-  (1|patient)` via statsmodels when installed, `stats.glmm_logit`). all three give the
-  clustering-honest effect, not the falsely-narrow naive one.
+  (1|patient)` via statsmodels, `stats.glmm_logit`). they agree: even clustered, equivalentdiameter's
+  effect is large and significant (cluster-robust **OR/SD 9.0, 95% ci [3.8, 21.2], p<0.001**; the
+  glmm gives 9.7 [6.2, 15.0]; the bootstrap auc ci is [0.92, 0.97]). so the size association is real,
+  not a clustering artifact, though still circular per the first caveat.
 
 **segmentation** dice was 0.47 on the threshold baseline (weak on real ct, as expected); the
 features use the consensus mask, so this does not touch the feature results, and it is exactly
@@ -290,7 +292,11 @@ scanner is another. lidc-idri spans several scanner manufacturers, so when the c
 than one the pipeline applies **combat** (`harmonization.combat`, the empirical-bayes location-scale
 method behind neuroCombat) across scanner batches and reports the **median batch-variance-explained
 before vs after** (one-way eta^2 per feature), the standard check that batch effects shrink toward
-chance without erasing biological signal. it is the acquisition-side companion to the segmentation
+chance without erasing biological signal. on this 143-scan subset that meant cutting the median
+batch-variance-explained from **0.012 to 0.001** across its 2 scanner manufacturers, a real but
+small reduction because the subset is near single-institution (little batch effect to remove); the
+machinery is ready for a genuinely multi-center cohort where the effect is large. it is the
+acquisition-side companion to the segmentation
 reproducibility above, the same instability-characterization lens project 1 turned on
 reconstruction, now closing the loop on the third upstream source.
 
@@ -336,10 +342,11 @@ tests/     test_core.py
 
 **verified end-to-end on both synthetic data and real lidc-idri.** the synthetic phantom
 develops the method (floor recovery, volume-confound, the low-signal guard, all unit-tested,
-exit-0); the real lidc run validates it (109 nodules / 32 patients, 4-radiologist
-inter-observer reproducibility median icc 0.91 raw -> 0.99 floored, matching the published
-range; a glcm texture family is in, and a cohort-size sweep to 181 nodules shows its
-reproducibility is stable at ~0.89, not underpowered, with ~half the glcm features structurally
-low-variance on lidc). next: train the monai segmenter to replace the dice-0.47 threshold
-baseline, the remaining pyradiomics families on a texturally diverse cohort, and cluster-robust
-stats (build plan above).
+exit-0); the real lidc run validates it (399 nodules / 136 patients, 4-radiologist inter-observer
+reproducibility median icc 0.90 raw -> 0.99 floored over n=181, matching the published range; a
+glcm texture family stable at ~0.89 by a cohort-size sweep, with ~half the glcm features
+structurally low-variance on lidc; the size->malignancy association holds under a cluster-robust
+logit + random-intercept glmm, OR/SD ~9; combat scanner harmonization is in). next: train the
+monai segmenter to replace the dice-0.47 threshold baseline, the remaining pyradiomics families
+on a texturally diverse cohort, and a multi-center cohort to stress the clustering + combat models
+(build plan above).

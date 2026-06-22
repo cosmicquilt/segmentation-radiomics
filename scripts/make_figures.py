@@ -124,9 +124,9 @@ def real_lidc_figure() -> None:
         real_raw, real_flo = medians(r["interobserver"]), medians(r["interobserver_floored"])
         n_nod, n_pat = r.get("interobserver_n_nodules", "?"), r.get("n_patients", "?")
     else:
-        proxy_raw, proxy_flo = [0.474, 0.769, 0.458, 0.355], [0.725, 0.904, 0.815, 0.612]
-        real_raw, real_flo = [0.914, 0.954, 0.841, 0.892], [0.990, 0.990, 0.990, 0.990]
-        n_nod, n_pat = 54, 32
+        proxy_raw, proxy_flo = [0.484, 0.811, 0.480, 0.405], [0.729, 0.931, 0.794, 0.625]
+        real_raw, real_flo = [0.895, 0.931, 0.812, 0.895], [0.985, 0.987, 0.985, 0.982]
+        n_nod, n_pat = 181, 136
 
     fams = ["all 22", "shape", "first-order", "texture *"]
     x = np.arange(len(fams))
