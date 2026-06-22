@@ -42,10 +42,11 @@ segmenter is the main piece still to swap in:
 `configs/lidc.yaml`): real consensus masks, the radiologist malignancy rating as the label,
 the 4-radiologist inter-observer reproducibility, and a **glcm texture family** (fixed 25 hu
 bin width), all in the real-data results below. **still on the build plan:** (1) train the
-monai u-net to replace the threshold baseline (dice 0.47 on real ct is weak by design); (2) a
-**larger, texturally-varied cohort** to pin texture reproducibility (the glcm features are
-low-signal on the current small subset) plus the remaining **pyradiomics** families
-(glrlm/glszm/ngtdm); (3) cluster-robust or mixed-effects stats, since nodules cluster within
+monai u-net to replace the threshold baseline (dice 0.47 on real ct is weak by design); (2) the
+remaining **pyradiomics** families (glrlm/glszm/ngtdm) on a texturally *diverse* cohort
+(part-solid / ground-glass nodules, not just the solid ones here), since the cohort-size sweep
+showed ~half the glcm features are structurally low-variance on this set rather than underpowered;
+(3) cluster-robust or mixed-effects stats, since nodules cluster within
 patients; (4) validate the malignancy correlation on lidc's ~157-case **pathology-confirmed**
 subset, not just the subjective rating. a stochastic contour perturbation, small-nodule icc
 stratification, and combat / nested-combat harmonization round out the list. then stop, no
@@ -199,15 +200,23 @@ the degeneracy check below).
 
 **texture is the exception worth dwelling on.** the 10 glcm features are by far the *most*
 fragile under the proxy (median icc 0.36, lowest of any family, matching the literature's view
-of texture as boundary-sensitive) yet look robust under the real readers (0.89). but the
-low-signal guard fires on **8 of the 10** (in the perturbation analysis over all 109 nodules):
-across this small, homogeneous subset the texture features barely vary between nodules, so their
-iccs (here and in the inter-observer set) are ill-conditioned (the asterisk in the table and
-figure). so the honest read is not "texture is reproducible" but "this cohort is
-too small and texturally uniform to measure texture reproducibility cleanly". the proxy (0.36)
-and the literature say texture is the fragile family; pinning the real number needs a larger,
-texturally varied cohort. the guard catching this, rather than the pipeline reporting a
-confident 0.89, is the point.
+of texture as boundary-sensitive) yet look robust under the real readers (0.89). to test whether
+that 0.89 was a real estimate or a small-cohort artifact, a **cohort-size sweep**
+(`scripts/cohort_sweep.py`) grew the 4-rater set to **181 nodules** (a larger lidc download) and
+recomputed the inter-observer icc at each size:
+
+![two-panel sweep: top, median inter-observer ICC for shape, first-order and texture stays flat as the cohort grows from 20 to 181 nodules, with texture stable around 0.89 between shape at 0.93 and first-order at 0.81; bottom, the count of low-signal texture features stays flat near 4 to 5 out of 10 and never falls to zero](docs/figures/cohort_sweep.png)
+
+the sweep settles it. texture reproducibility is **stable at ~0.89 from n=20 to n=181** (above
+first-order's 0.81, below shape's 0.93), so the estimate is real, not underpowered. but **~4-5 of
+the 10 glcm features stay flagged low-signal at every cohort size** (the bottom panel never falls
+toward zero): roughly half the texture features are *genuinely near-constant* across lidc nodules,
+so their iccs are ill-conditioned no matter how much data is added. the honest read is therefore
+two-part: the signal-bearing texture features are reproducibly delineated, but the low-variance
+half is a structural property of this 10-feature lite glcm on lidc, not a sample-size problem.
+settling "stable vs underpowered" is exactly what the sweep is for, which is why the family median
+is reported next to its low-signal count rather than alone. (under the aggressive proxy texture is
+still the most fragile family, so the conservative reading stands.)
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
@@ -285,7 +294,7 @@ src/seg_radiomics/
 └── segmentation/
     ├── baseline.py     # threshold + largest-component (runs now)
     └── model.py        # monai u-net (production stub)
-scripts/   smoke_test.py · make_figures.py · download_data.md
+scripts/   smoke_test.py · make_figures.py · cohort_sweep.py · download_data.md
 configs/   default.yaml · lidc.yaml
 tests/     test_core.py
 ```
@@ -296,6 +305,8 @@ tests/     test_core.py
 develops the method (floor recovery, volume-confound, the low-signal guard, all unit-tested,
 exit-0); the real lidc run validates it (109 nodules / 32 patients, 4-radiologist
 inter-observer reproducibility median icc 0.91 raw -> 0.99 floored, matching the published
-range; a glcm texture family is in but flagged low-signal on this small subset). next: train
-the monai segmenter to replace the dice-0.47 threshold baseline, a larger texturally-varied
-cohort to pin texture reproducibility, and cluster-robust stats (build plan above).
+range; a glcm texture family is in, and a cohort-size sweep to 181 nodules shows its
+reproducibility is stable at ~0.89, not underpowered, with ~half the glcm features structurally
+low-variance on lidc). next: train the monai segmenter to replace the dice-0.47 threshold
+baseline, the remaining pyradiomics families on a texturally diverse cohort, and cluster-robust
+stats (build plan above).
