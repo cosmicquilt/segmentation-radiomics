@@ -7,7 +7,7 @@ seed: 0
 data:
   source: lidc
   dicom_root: /content/drive/MyDrive/lidc   # flat tcia download dir <root>/<series_uid>/*.dcm; env LIDC_DICOM_ROOT overrides
-  limit: 60                 # number of scans with dicoms on disk to load (others skipped)
+  limit: 200                # max scans with dicoms on disk to load (others skipped); raise with the download
   clevel: 0.5               # radiologist-consensus level
   pad: 2
   malignant_threshold: 3    # median malignancy > 3 -> malignant (1-5 scale 3 = indeterminate)
