@@ -53,6 +53,23 @@ def _require_pylidc():
         ) from exc
 
 
+def _scan_manufacturer(scan) -> str:
+    """scanner manufacturer/model from one dicom header (the combat batch); 'unknown' on failure"""
+    try:
+        import glob
+        import os
+
+        import pydicom
+
+        dcms = glob.glob(os.path.join(scan.get_path_to_dicom_files(), "*.dcm"))
+        if not dcms:
+            return "unknown"
+        h = pydicom.dcmread(dcms[0], stop_before_pixels=True)
+        return f"{getattr(h, 'Manufacturer', '?')}/{getattr(h, 'ManufacturerModelName', '?')}".strip()
+    except Exception:
+        return "unknown"
+
+
 def build_lidc_cohort(
     limit: int | None = 50,
     clevel: float = 0.5,
@@ -110,6 +127,7 @@ def build_lidc_cohort(
             logger.debug("LIDC: skip %s (no dicoms on disk): %s", scan.patient_id, exc)
             continue
         used += 1
+        scanner = _scan_manufacturer(scan)
         spacing = (float(scan.pixel_spacing), float(scan.pixel_spacing), float(scan.slice_spacing))
         for annotations in scan.cluster_annotations():
             if len(annotations) < min_annotations:
@@ -131,6 +149,7 @@ def build_lidc_cohort(
                     "malignancy": malignancy,
                     "spacing": spacing,
                     "scan_id": scan.patient_id,
+                    "scanner": scanner,
                 }
             )
     if not cohort:

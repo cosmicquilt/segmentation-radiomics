@@ -64,7 +64,7 @@ def run_pipeline(cfg: dict) -> dict:
 
     cohort = build_cohort(cfg)
     report = _qc.QCReport()
-    dices, ious, feats, labels, groups = [], [], [], [], []
+    dices, ious, feats, labels, groups, scanners = [], [], [], [], [], []
 
     for case in cohort:
         image, gt, label = case["image"], case["mask"], case["label"]
@@ -89,6 +89,7 @@ def run_pipeline(cfg: dict) -> dict:
             feats.append(extract_features(image, feat_mask, spacing=spacing))
             labels.append(label)
             groups.append(case.get("scan_id"))
+            scanners.append(case.get("scanner"))
         except ValueError:
             report.dropped += 1
 
@@ -102,6 +103,26 @@ def run_pipeline(cfg: dict) -> dict:
     if any(g is not None for g in groups):
         for name in list(correlations)[:3]:
             cluster_ci[name] = list(cluster_bootstrap_auc(table[name], labels, groups))
+
+    # clustering-aware models for the top association: cluster-robust logit (always) + a
+    # random-intercept glmm (if statsmodels is installed); and combat scanner harmonization
+    cluster_models = combat_report = None
+    if any(g is not None for g in groups) and correlations:
+        from .stats import cluster_robust_logit, glmm_logit
+        top = next(iter(correlations))
+        cluster_models = {"feature": top,
+                          "cluster_robust": cluster_robust_logit(table[top], labels, groups),
+                          "glmm": glmm_logit(table[top], labels, groups)}
+    if len({s for s in scanners if s and s != "unknown"}) >= 2:
+        from .harmonization import batch_variance_explained, combat
+        cols = [k for k in table if np.isfinite(table[k]).all()]
+        mat = np.array([[table[k][i] for k in cols] for i in range(len(labels))], dtype=float)
+        combat_report = {
+            "n_batches": len({s for s in scanners if s}),
+            "n_features": len(cols),
+            "batch_var_before": batch_variance_explained(mat, scanners),
+            "batch_var_after": batch_variance_explained(combat(mat, scanners), scanners),
+        }
 
     # feature reproducibility under +/-1 voxel segmentation perturbation, the stability
     # companion to the outcome correlation (mirrors project 1's reconstruction analysis)
@@ -144,6 +165,8 @@ def run_pipeline(cfg: dict) -> dict:
         "iou_mean": float(np.mean(ious)) if ious else float("nan"),
         "correlations": correlations,
         "correlation_cluster_ci": cluster_ci,
+        "cluster_models": cluster_models,
+        "combat": combat_report,
         "volume_confound": vol_confound,
         "reproducibility": reproducibility,
         "reproducibility_per_feature": repro_rows,
@@ -191,6 +214,21 @@ def format_results(results: dict, top_k: int = 5) -> str:
         lines.append("patient-clustered bootstrap 95% CI for AUC (resampling patients, not nodules):")
         for name, (lo, hi) in cci.items():
             lines.append(f"  {name}: [{lo:.3f}, {hi:.3f}]")
+    cm = results.get("cluster_models") or {}
+    if cm.get("cluster_robust"):
+        cr = cm["cluster_robust"]
+        lines.append(f"cluster-robust logistic regression of malignancy on {cm['feature']} "
+                     f"(clustered by patient, n={cr['n']} / {cr['n_clusters']} patients): "
+                     f"OR/SD {cr['odds_ratio_per_sd']:.2f} [{cr['or_ci'][0]:.2f}, {cr['or_ci'][1]:.2f}], p={cr['p']:.3f}")
+        if cm.get("glmm"):
+            gl = cm["glmm"]
+            lines.append(f"  random-intercept GLMM agrees: OR/SD {gl['odds_ratio_per_sd']:.2f} "
+                         f"[{gl['or_ci'][0]:.2f}, {gl['or_ci'][1]:.2f}]")
+    cb = results.get("combat")
+    if cb:
+        lines.append(f"combat harmonization across {cb['n_batches']} scanner batches "
+                     f"({cb['n_features']} finite features): median batch-variance-explained "
+                     f"{cb['batch_var_before']:.3f} -> {cb['batch_var_after']:.3f}")
 
     repro = results.get("reproducibility", {})
     floored = results.get("reproducibility_floored", {})

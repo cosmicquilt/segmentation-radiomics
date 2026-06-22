@@ -35,7 +35,8 @@ segmenter is the main piece still to swap in:
 | features | radiomics-lite (shape + first-order + **glcm texture**, numpy, fixed 25 hu bin width) | **pyradiomics** remaining families (glrlm/glszm/ngtdm), ibsi-validated |
 | reproducibility | icc(2,1) under +/-1 voxel erode/dilate **and across lidc's 4 radiologist masks** (real inter-observer), raw + parenchyma-floored | stochastic contour perturbation, texture-family icc |
 | confound checks | spearman vs roi volume (size-proxy flag), nodules-per-patient | small-nodule icc stratification, combat cross-batch harmonization |
-| correlation | per-feature pearson r + roc auc + **patient-clustered bootstrap ci**, synthetic **and real lidc malignancy** | full mixed-effects model (glmm) for clustering |
+| correlation + clustering | pearson r + auc + **patient-cluster bootstrap, cluster-robust logit, random-intercept glmm** | multi-center validation of the clustering models |
+| harmonization | **combat** across scanner batches (empirical bayes) | nested-combat for simultaneous batch effects |
 | qc | empty / leakage / fragmentation checks | same |
 
 **what's done vs left.** the lidc-idri path now runs end-to-end (loader `data/lidc.py`,
@@ -46,11 +47,12 @@ monai u-net to replace the threshold baseline (dice 0.47 on real ct is weak by d
 remaining **pyradiomics** families (glrlm/glszm/ngtdm) on a texturally *diverse* cohort
 (part-solid / ground-glass nodules, not just the solid ones here), since the cohort-size sweep
 showed ~half the glcm features are structurally low-variance on this set rather than underpowered;
-(3) a full **mixed-effects model** for the within-patient clustering (the
-patient-clustered bootstrap ci is in, the glmm is the next step); (4) validate the malignancy
-correlation on lidc's ~157-case **pathology-confirmed**
-subset, not just the subjective rating. a stochastic contour perturbation, small-nodule icc
-stratification, and combat / nested-combat harmonization round out the list. then stop, no
+(3) validate the malignancy
+correlation on lidc's ~157-case **pathology-confirmed** subset, not just the subjective rating.
+the within-patient clustering is now handled (patient-clustered bootstrap ci + cluster-robust
+logit + random-intercept glmm), and **combat** scanner-batch harmonization is in, so a genuine
+multi-center cohort to stress both, plus nested-combat for simultaneous batch effects, a stochastic
+contour perturbation, and small-nodule icc stratification round out the list. then stop, no
 radiogenomics (scope creep).
 see `scripts/download_data.md`.
 
@@ -272,14 +274,25 @@ but that auc must be read against three caveats the pipeline and a radiomics rev
   0.81 with volume, so even where an intensity feature looks predictive it can be size in
   disguise, and is discounted.
 - **nodules cluster within patients** (109 from 32), so the univariate stats are not
-  independent. the run reports the patient count *and* a **patient-clustered bootstrap 95% CI**
-  for the top associations (`correlation.cluster_bootstrap_auc` resamples patients, not nodules,
-  so the interval is not falsely narrowed by intra-patient correlation); a full mixed-effects
-  model is the remaining refinement.
+  independent. the run accounts for this three ways for the top association: a **patient-clustered
+  bootstrap 95% CI** for the auc (`correlation.cluster_bootstrap_auc` resamples patients, not
+  nodules), a **cluster-robust logistic regression** (sandwich SEs clustered by patient,
+  `stats.cluster_robust_logit`), and a **random-intercept GLMM** (`malignant ~ feature +
+  (1|patient)` via statsmodels when installed, `stats.glmm_logit`). all three give the
+  clustering-honest effect, not the falsely-narrow naive one.
 
 **segmentation** dice was 0.47 on the threshold baseline (weak on real ct, as expected); the
 features use the consensus mask, so this does not touch the feature results, and it is exactly
 what the monai segmenter is for.
+
+**3. acquisition harmonization (combat).** segmentation is one source of feature instability; the
+scanner is another. lidc-idri spans several scanner manufacturers, so when the cohort carries more
+than one the pipeline applies **combat** (`harmonization.combat`, the empirical-bayes location-scale
+method behind neuroCombat) across scanner batches and reports the **median batch-variance-explained
+before vs after** (one-way eta^2 per feature), the standard check that batch effects shrink toward
+chance without erasing biological signal. it is the acquisition-side companion to the segmentation
+reproducibility above, the same instability-characterization lens project 1 turned on
+reconstruction, now closing the loop on the third upstream source.
 
 ## quality control (first-class, `qc.py`)
 
@@ -301,7 +314,9 @@ src/seg_radiomics/
 ├── seg_metrics.py      # dice, iou, confusion, sensitivity/precision
 ├── morphology.py       # numpy erosion / surface / connected components
 ├── features.py         # radiomics-lite: shape + first-order + glcm texture (pyradiomics names)
-├── correlation.py      # pearson r + auc + spearman volume-confound check
+├── correlation.py      # pearson r + auc + spearman volume-confound + patient-cluster bootstrap
+├── stats.py            # clustering-aware inference: cluster-robust logit + random-intercept glmm
+├── harmonization.py    # combat scanner-batch harmonization (empirical bayes, numpy)
 ├── reproducibility.py  # feature icc(2,1) under mask perturbation, raw + parenchyma-floored
 ├── qc.py               # case-level quality control + report
 ├── pipeline.py         # cohort -> qc -> segment -> metrics -> features -> correlate

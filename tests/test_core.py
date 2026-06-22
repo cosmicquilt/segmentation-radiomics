@@ -11,7 +11,8 @@ import pytest
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from seg_radiomics import correlation, features, qc, reproducibility, seg_metrics  # noqa: E402
+from seg_radiomics import (  # noqa: E402
+    correlation, features, harmonization, qc, reproducibility, seg_metrics, stats)
 from seg_radiomics.data.synthetic import make_cohort, make_lesion_volume  # noqa: E402
 from seg_radiomics.morphology import connected_components, erode  # noqa: E402
 from seg_radiomics.segmentation.baseline import threshold_segment  # noqa: E402
@@ -161,6 +162,36 @@ def test_cluster_bootstrap_auc():
     # fewer than 3 patients cannot be resampled at the patient level -> nan
     lo2, _ = correlation.cluster_bootstrap_auc([1.0, 0.0, 1.0], [1, 0, 1], ["a", "a", "a"], n_boot=100)
     assert np.isnan(lo2)
+
+
+def test_combat_reduces_batch_effect():
+    rng = np.random.default_rng(0)
+    feats, batches = [], []
+    for loc, scl in [(0.0, 1.0), (8.0, 0.5), (-5.0, 2.0)]:  # 3 scanner-like batches
+        for _ in range(40):
+            lab = int(rng.integers(0, 2))
+            feats.append(np.array([lab * 3.0, lab * 1.5, 0.0, 5.0]) + loc + scl * rng.normal(0, 1, 4))
+            batches.append(loc)
+    feats, batches = np.array(feats), np.array(batches)
+    before = harmonization.batch_variance_explained(feats, batches)
+    after = harmonization.batch_variance_explained(harmonization.combat(feats, batches), batches)
+    assert after < before * 0.5  # batch effect substantially removed
+
+
+def test_cluster_robust_logit():
+    rng = np.random.default_rng(0)
+    xs, ys, gs = [], [], []
+    for p in range(25):  # 25 patients, a random intercept each, x drives the outcome
+        pe = rng.normal(0, 1)
+        for _ in range(int(rng.integers(2, 6))):
+            x = rng.normal(0, 1)
+            ys.append(int(rng.random() < 1 / (1 + np.exp(-(1.2 * x + pe)))))
+            xs.append(x)
+            gs.append(p)
+    r = stats.cluster_robust_logit(xs, ys, gs)
+    assert r is not None and r["slope"] > 0 and 0.0 <= r["p"] <= 1.0
+    # fewer than 3 clusters -> None
+    assert stats.cluster_robust_logit([0.0, 1.0, 2.0], [0, 1, 1], ["a", "a", "b"]) is None
 
 
 def test_hu_floor_recovers_first_order_reproducibility():
