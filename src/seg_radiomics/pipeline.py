@@ -19,7 +19,7 @@ import logging
 import numpy as np
 
 from . import qc as _qc
-from .correlation import correlate_features, features_to_table, volume_confound
+from .correlation import cluster_bootstrap_auc, correlate_features, features_to_table, volume_confound
 from .data.synthetic import make_cohort
 from .features import extract_features
 from .seg_metrics import all_seg_metrics
@@ -64,7 +64,7 @@ def run_pipeline(cfg: dict) -> dict:
 
     cohort = build_cohort(cfg)
     report = _qc.QCReport()
-    dices, ious, feats, labels = [], [], [], []
+    dices, ious, feats, labels, groups = [], [], [], [], []
 
     for case in cohort:
         image, gt, label = case["image"], case["mask"], case["label"]
@@ -88,6 +88,7 @@ def run_pipeline(cfg: dict) -> dict:
         try:
             feats.append(extract_features(image, feat_mask, spacing=spacing))
             labels.append(label)
+            groups.append(case.get("scan_id"))
         except ValueError:
             report.dropped += 1
 
@@ -95,6 +96,12 @@ def run_pipeline(cfg: dict) -> dict:
     correlations = correlate_features(table, labels)
     # flag features whose predictivity is just a restatement of lesion size (energy etc.)
     vol_confound = volume_confound(table)
+    # patient-clustered bootstrap ci for the top associations: nodules are not independent
+    # within a patient, so resample patients (not nodules) for an honest auc interval
+    cluster_ci = {}
+    if any(g is not None for g in groups):
+        for name in list(correlations)[:3]:
+            cluster_ci[name] = list(cluster_bootstrap_auc(table[name], labels, groups))
 
     # feature reproducibility under +/-1 voxel segmentation perturbation, the stability
     # companion to the outcome correlation (mirrors project 1's reconstruction analysis)
@@ -136,6 +143,7 @@ def run_pipeline(cfg: dict) -> dict:
         "dice_std": float(np.std(dices)) if dices else float("nan"),
         "iou_mean": float(np.mean(ious)) if ious else float("nan"),
         "correlations": correlations,
+        "correlation_cluster_ci": cluster_ci,
         "volume_confound": vol_confound,
         "reproducibility": reproducibility,
         "reproducibility_per_feature": repro_rows,
@@ -178,6 +186,11 @@ def format_results(results: dict, top_k: int = 5) -> str:
                      "(not independent, the univariate stats below are not cluster-corrected)")
     for name, stats in list(results["correlations"].items())[:top_k]:
         lines.append(f"| {name} | {stats['pearson_r']:+.3f} | {stats['auc']:.3f} |")
+    cci = results.get("correlation_cluster_ci") or {}
+    if cci:
+        lines.append("patient-clustered bootstrap 95% CI for AUC (resampling patients, not nodules):")
+        for name, (lo, hi) in cci.items():
+            lines.append(f"  {name}: [{lo:.3f}, {hi:.3f}]")
 
     repro = results.get("reproducibility", {})
     floored = results.get("reproducibility_floored", {})

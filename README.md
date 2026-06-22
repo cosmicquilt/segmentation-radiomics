@@ -35,7 +35,7 @@ segmenter is the main piece still to swap in:
 | features | radiomics-lite (shape + first-order + **glcm texture**, numpy, fixed 25 hu bin width) | **pyradiomics** remaining families (glrlm/glszm/ngtdm), ibsi-validated |
 | reproducibility | icc(2,1) under +/-1 voxel erode/dilate **and across lidc's 4 radiologist masks** (real inter-observer), raw + parenchyma-floored | stochastic contour perturbation, texture-family icc |
 | confound checks | spearman vs roi volume (size-proxy flag), nodules-per-patient | small-nodule icc stratification, combat cross-batch harmonization |
-| correlation | per-feature pearson r + roc auc, synthetic **and real lidc malignancy** | cluster-robust / mixed-effects stats (nodules cluster within patients) |
+| correlation | per-feature pearson r + roc auc + **patient-clustered bootstrap ci**, synthetic **and real lidc malignancy** | full mixed-effects model (glmm) for clustering |
 | qc | empty / leakage / fragmentation checks | same |
 
 **what's done vs left.** the lidc-idri path now runs end-to-end (loader `data/lidc.py`,
@@ -46,8 +46,9 @@ monai u-net to replace the threshold baseline (dice 0.47 on real ct is weak by d
 remaining **pyradiomics** families (glrlm/glszm/ngtdm) on a texturally *diverse* cohort
 (part-solid / ground-glass nodules, not just the solid ones here), since the cohort-size sweep
 showed ~half the glcm features are structurally low-variance on this set rather than underpowered;
-(3) cluster-robust or mixed-effects stats, since nodules cluster within
-patients; (4) validate the malignancy correlation on lidc's ~157-case **pathology-confirmed**
+(3) a full **mixed-effects model** for the within-patient clustering (the
+patient-clustered bootstrap ci is in, the glmm is the next step); (4) validate the malignancy
+correlation on lidc's ~157-case **pathology-confirmed**
 subset, not just the subjective rating. a stochastic contour perturbation, small-nodule icc
 stratification, and combat / nested-combat harmonization round out the list. then stop, no
 radiogenomics (scope creep).
@@ -271,8 +272,10 @@ but that auc must be read against three caveats the pipeline and a radiomics rev
   0.81 with volume, so even where an intensity feature looks predictive it can be size in
   disguise, and is discounted.
 - **nodules cluster within patients** (109 from 32), so the univariate stats are not
-  independent; the run reports the patient count and a proper analysis needs cluster-robust or
-  mixed-effects modeling (build plan).
+  independent. the run reports the patient count *and* a **patient-clustered bootstrap 95% CI**
+  for the top associations (`correlation.cluster_bootstrap_auc` resamples patients, not nodules,
+  so the interval is not falsely narrowed by intra-patient correlation); a full mixed-effects
+  model is the remaining refinement.
 
 **segmentation** dice was 0.47 on the threshold baseline (weak on real ct, as expected); the
 features use the consensus mask, so this does not touch the feature results, and it is exactly

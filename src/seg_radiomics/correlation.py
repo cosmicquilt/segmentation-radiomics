@@ -103,6 +103,36 @@ def volume_confound(feature_table: dict[str, list], volume_key: str = "shape_Vox
     return dict(sorted(out.items(), key=lambda kv: kv[1]["abs"], reverse=True))
 
 
+def cluster_bootstrap_auc(scores, labels, groups, n_boot: int = 2000, seed: int = 0):
+    """percentile 95% ci for auc that resamples whole patients (groups), not nodules
+
+    the independence-honest interval when several nodules share a patient: a plain bootstrap
+    over nodules would understate the ci because intra-patient nodules are correlated. this
+    resamples the unique patient ids with replacement, pools their nodules, and recomputes auc.
+    returns (lo, hi)
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    labels = np.asarray(labels).astype(int)
+    groups = np.asarray(groups)
+    ok = np.isfinite(scores)
+    scores, labels, groups = scores[ok], labels[ok], groups[ok]
+    uniq = np.unique(groups)
+    if uniq.size < 3:
+        return float("nan"), float("nan")
+    members = {g: np.where(groups == g)[0] for g in uniq}
+    rng = np.random.default_rng(seed)
+    boots = []
+    for _ in range(n_boot):
+        pick = rng.choice(uniq, size=uniq.size, replace=True)
+        idx = np.concatenate([members[g] for g in pick])
+        a = auc(scores[idx], labels[idx])
+        if np.isfinite(a):
+            boots.append(a)
+    if len(boots) < 20:
+        return float("nan"), float("nan")
+    return float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+
+
 def features_to_table(feature_dicts: list[dict]) -> dict[str, list]:
     """transpose a list of per-subject feature dicts into a column table"""
     if not feature_dicts:

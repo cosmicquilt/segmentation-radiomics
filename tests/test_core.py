@@ -147,6 +147,22 @@ def test_volume_confound_flags_size_proxy():
     assert not vc["independent"]["volume_proxy"]
 
 
+def test_cluster_bootstrap_auc():
+    rng = np.random.default_rng(0)
+    scores, labels, groups = [], [], []
+    for p in range(30):  # 30 patients, 1-4 nodules each, label tied to the patient
+        lab = p % 2
+        for _ in range(int(rng.integers(1, 5))):
+            scores.append(lab + rng.normal(0, 0.4))
+            labels.append(lab)
+            groups.append(p)
+    lo, hi = correlation.cluster_bootstrap_auc(scores, labels, groups, n_boot=500)
+    assert 0.0 <= lo <= hi <= 1.0
+    # fewer than 3 patients cannot be resampled at the patient level -> nan
+    lo2, _ = correlation.cluster_bootstrap_auc([1.0, 0.0, 1.0], [1, 0, 1], ["a", "a", "a"], n_boot=100)
+    assert np.isnan(lo2)
+
+
 def test_hu_floor_recovers_first_order_reproducibility():
     cohort = make_cohort(n=12, shape=(32, 40, 40), seed=2)
     raw = {r["feature"]: r["icc"] for r in reproducibility.feature_reproducibility(cohort, use_gt=True)}
