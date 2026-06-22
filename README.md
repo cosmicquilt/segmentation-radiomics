@@ -22,6 +22,18 @@ source, the *segmentation*, with the **same ICC / CCC machinery**. project 1 ask
 reconstruction perturbs features, this asks how segmentation does. together they recover
 a *trustworthy image* and then turn it into *trustworthy numbers*.
 
+## recent additions
+
+actively hardened against the statistical blind spots a radiomics reviewer hunts for:
+
+- **real 4-radiologist inter-observer reproducibility** on **399 nodules / 136 patients** (181
+  drawn by all four), the gold-standard design, alongside the synthetic +/-1 voxel proxy.
+- a **glcm texture family** (10 haralick, fixed 25 hu bins) plus a cohort-size sweep that settles
+  whether its reproducibility is real signal or just underpowered.
+- **clustering-honest inference** for the multiple-nodules-per-patient problem: a patient-clustered
+  bootstrap ci, a cluster-robust logistic regression, and a random-intercept glmm (all agree).
+- **combat** scanner-batch harmonization (empirical bayes) across dicom-manufacturer batches.
+
 ## what runs today vs the build plan
 
 the pipeline runs **end-to-end right now** two ways: on synthetic lung-ct-like volumes
