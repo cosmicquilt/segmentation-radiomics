@@ -281,7 +281,10 @@ but that auc must be read against three caveats the pipeline and a radiomics rev
   and radiologists use size as a primary malignancy cue (fleischner / lung-rads). so size
   predicting the rating at auc 0.94 is a **confirmation of clinical triaging guidelines, not
   the discovery of an independent biomarker** (the size-only baseline on this label is a
-  published auc 0.94-0.97, so this is exactly the expected number).
+  published auc 0.94-0.97, so this is exactly the expected number). to make this quantitative the
+  pipeline reports the **volume-residualized partial correlation** of every feature with malignancy
+  (`correlation.partial_correlation`), the direct test of whether anything predicts malignancy
+  *beyond* lesion size.
 - **energy is a size proxy.** the volume-confound check flags `firstorder_Energy` at spearman
   0.84 with volume, so even where an intensity feature looks predictive it can be size in
   disguise, and is discounted.

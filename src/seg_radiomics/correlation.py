@@ -133,6 +133,40 @@ def cluster_bootstrap_auc(scores, labels, groups, n_boot: int = 2000, seed: int 
     return float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
 
 
+def partial_correlation(feature_table: dict[str, list], labels: list,
+                        control_key: str = "shape_VoxelVolume") -> dict:
+    """per-feature partial pearson correlation with labels, controlling for control_key (volume)
+
+    asks the question the size-circularity caveat is really about: does a feature predict the
+    outcome *beyond lesion size*? the partial correlation r(f,y|v) = (r_fy - r_fv*r_yv) /
+    sqrt((1-r_fv^2)(1-r_yv^2)) removes the size-mediated part, so a feature that only predicted
+    through size collapses toward 0. returns {feature: {partial_r, raw_r, vol_r}} sorted by
+    descending |partial_r|, excluding the control feature itself
+    """
+    if control_key not in feature_table:
+        return {}
+    y = np.asarray(labels, dtype=np.float64)
+    v = np.asarray(feature_table[control_key], dtype=np.float64)
+    out = {}
+    for name, vals in feature_table.items():
+        if name == control_key:
+            continue
+        f = np.asarray(vals, dtype=np.float64)
+        ok = np.isfinite(f) & np.isfinite(v) & np.isfinite(y)
+        if ok.sum() < 4:
+            continue
+        r_fy, r_fv, r_yv = pearson(f[ok], y[ok]), pearson(f[ok], v[ok]), pearson(y[ok], v[ok])
+        if (1 - r_fv**2) < 0.02:
+            continue  # feature is essentially volume itself (e.g. equivalentdiameter), partial r undefined
+        denom = np.sqrt(max((1 - r_fv**2) * (1 - r_yv**2), 1e-12))
+        out[name] = {
+            "partial_r": float((r_fy - r_fv * r_yv) / denom),
+            "raw_r": float(r_fy),
+            "vol_r": float(r_fv),
+        }
+    return dict(sorted(out.items(), key=lambda kv: abs(kv[1]["partial_r"]), reverse=True))
+
+
 def features_to_table(feature_dicts: list[dict]) -> dict[str, list]:
     """transpose a list of per-subject feature dicts into a column table"""
     if not feature_dicts:

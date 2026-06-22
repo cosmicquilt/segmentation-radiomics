@@ -164,6 +164,24 @@ def test_cluster_bootstrap_auc():
     assert np.isnan(lo2)
 
 
+def test_partial_correlation_removes_size_mediation():
+    rng = np.random.default_rng(0)
+    n = 200
+    vol = rng.normal(0.0, 1.0, n)
+    indep = rng.normal(0.0, 1.0, n)  # a genuine size-independent signal
+    labels = ((1.5 * vol + 1.5 * indep + rng.normal(0.0, 0.3, n)) > 0).astype(int)
+    table = {
+        "shape_VoxelVolume": list(vol),
+        "size_proxy": list(vol + 0.3 * rng.normal(0.0, 1.0, n)),  # predicts label only via volume
+        "independent": list(indep),                               # predicts label beyond volume
+    }
+    pc = correlation.partial_correlation(table, labels)
+    # the size proxy's correlation with the label is fully explained by volume -> partial r ~ 0
+    assert abs(pc["size_proxy"]["partial_r"]) < 0.2
+    # the independent feature keeps its signal after controlling for volume
+    assert abs(pc["independent"]["partial_r"]) > 0.3
+
+
 def test_combat_reduces_batch_effect():
     rng = np.random.default_rng(0)
     feats, batches = [], []

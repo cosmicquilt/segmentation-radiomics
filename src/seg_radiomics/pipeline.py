@@ -19,7 +19,8 @@ import logging
 import numpy as np
 
 from . import qc as _qc
-from .correlation import cluster_bootstrap_auc, correlate_features, features_to_table, volume_confound
+from .correlation import (
+    cluster_bootstrap_auc, correlate_features, features_to_table, partial_correlation, volume_confound)
 from .data.synthetic import make_cohort
 from .features import extract_features
 from .seg_metrics import all_seg_metrics
@@ -97,6 +98,9 @@ def run_pipeline(cfg: dict) -> dict:
     correlations = correlate_features(table, labels)
     # flag features whose predictivity is just a restatement of lesion size (energy etc.)
     vol_confound = volume_confound(table)
+    # does any feature predict malignancy *beyond* lesion size? (the volume-residualized capstone
+    # to the size-circularity caveat: partial correlation controlling for roi volume)
+    partial_corr = partial_correlation(table, labels)
     # patient-clustered bootstrap ci for the top associations: nodules are not independent
     # within a patient, so resample patients (not nodules) for an honest auc interval
     cluster_ci = {}
@@ -168,6 +172,7 @@ def run_pipeline(cfg: dict) -> dict:
         "cluster_models": cluster_models,
         "combat": combat_report,
         "volume_confound": vol_confound,
+        "partial_correlation": partial_corr,
         "reproducibility": reproducibility,
         "reproducibility_per_feature": repro_rows,
         "hu_floor": hu_floor,
@@ -277,4 +282,13 @@ def format_results(results: dict, top_k: int = 5) -> str:
         lines += ["", "volume-confounded features (|spearman with VoxelVolume| >= 0.7, predictivity is a size proxy):"]
         for n in flagged[:6]:
             lines.append(f"  {n}: rho={vc[n]['spearman_vol']:+.3f}")
+
+    pc = results.get("partial_correlation") or {}
+    if pc:
+        lines += ["", "size-independent signal (partial r with malignancy, controlling for ROI volume):"]
+        for name, st in list(pc.items())[:4]:
+            lines.append(f"  {name}: partial r={st['partial_r']:+.3f} (raw r={st['raw_r']:+.3f})")
+        best = max(abs(st["partial_r"]) for st in pc.values())
+        lines.append("  -> no feature predicts malignancy beyond lesion size"
+                     if best < 0.2 else f"  -> strongest size-independent signal |partial r|={best:.2f}")
     return "\n".join(lines)
