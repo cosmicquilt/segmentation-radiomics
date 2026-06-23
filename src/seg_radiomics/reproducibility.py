@@ -48,6 +48,31 @@ def lin_ccc(x: np.ndarray, y: np.ndarray) -> float:
     return float(2 * cov / denom) if denom > 1e-12 else 1.0
 
 
+def ccc_components(x: np.ndarray, y: np.ndarray) -> dict:
+    """split lin's ccc into its precision and accuracy parts, ccc = precision * accuracy
+
+    precision is the pearson correlation (scatter about the best-fit line, the random/noise
+    term); accuracy is lin's bias-correction factor c_b in (0, 1] (how far that line sits from
+    the identity, the systematic part). a feature that fails on precision lost agreement to noise;
+    one that fails on accuracy lost it to a correctable systematic shift. loc_shift (u) and
+    scale_shift (v) say which kind: u != 0 is a mean offset, v != 1 a spread change
+    """
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    mx, my, sx, sy = x.mean(), y.mean(), x.std(), y.std()
+    cov = ((x - mx) * (y - my)).mean()
+    denom = sx**2 + sy**2 + (mx - my) ** 2
+    ccc = float(2 * cov / denom) if denom > 1e-12 else 1.0
+    if sx < 1e-12 or sy < 1e-12:  # near-constant feature, precision/accuracy undefined
+        return {"ccc": ccc, "precision": float("nan"), "accuracy": float("nan"),
+                "loc_shift": float("nan"), "scale_shift": float("nan")}
+    precision = float(cov / (sx * sy))           # pearson r
+    v = float(sx / sy)                            # scale shift, 1 = matched spread
+    u = float((mx - my) / np.sqrt(sx * sy))       # location shift, 0 = matched mean
+    accuracy = float(2.0 / (v + 1.0 / v + u**2))  # lin's bias-correction factor c_b
+    return {"ccc": ccc, "precision": precision, "accuracy": accuracy,
+            "loc_shift": u, "scale_shift": v}
+
+
 def icc_2_1(data: np.ndarray) -> float:
     """icc(2,1) two-way random effects absolute agreement single measurement
 
@@ -121,11 +146,14 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
         between = mat[:, 0].std()
         within = (mat - mat.mean(axis=1, keepdims=True)).std()
         snr = float(between / (within + 1e-12))
+        comp = ccc_components(mat[:, 0], mat[:, 1:].mean(1))  # reference vs mean perturbed
         rows.append({
             "feature": name,
             "fclass": feature_class(name),
             "icc": icc_2_1(mat),                      # agreement across the 3 segmentations
-            "ccc": lin_ccc(mat[:, 0], mat[:, 1:].mean(1)),  # reference vs mean perturbed
+            "ccc": comp["ccc"],
+            "ccc_precision": comp["precision"],       # pearson, the noise term
+            "ccc_accuracy": comp["accuracy"],         # bias-correction c_b, the systematic term
             "snr": snr,                               # between-case / within-case spread
             "low_signal": bool(snr < min_snr),        # near-constant across cases, icc untrustworthy
         })

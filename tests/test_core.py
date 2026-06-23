@@ -118,6 +118,18 @@ def test_lin_ccc_identity_and_offset():
     assert reproducibility.lin_ccc(x, x + 5.0) < 1.0  # offset penalized
 
 
+def test_ccc_components_separate_noise_from_bias():
+    rng = np.random.default_rng(0)
+    x = rng.normal(10, 2, 300)
+    # noise drops precision but not accuracy (no systematic shift)
+    noise = reproducibility.ccc_components(x, x + rng.normal(0, 2, 300))
+    # a pure location shift keeps precision ~1 but collapses accuracy
+    shift = reproducibility.ccc_components(x, x + 3.0)
+    assert noise["ccc"] == pytest.approx(noise["precision"] * noise["accuracy"], abs=1e-9)
+    assert noise["precision"] < 0.85 and noise["accuracy"] > 0.9   # failed by noise
+    assert shift["precision"] == pytest.approx(1.0, abs=1e-9) and shift["accuracy"] < 0.9  # failed by bias
+
+
 def test_feature_reproducibility_structure_and_ranking():
     cohort = make_cohort(n=12, shape=(32, 40, 40), seed=1)
     rows = reproducibility.feature_reproducibility(cohort, use_gt=True)
