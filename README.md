@@ -28,6 +28,9 @@ actively hardened against the statistical blind spots a radiomics reviewer hunts
 
 - **real 4-radiologist inter-observer reproducibility** on **796 nodules / 280 patients** (311
   drawn by all four), the gold-standard design, alongside the synthetic +/-1 voxel proxy.
+- a **repeatability coefficient** (`%rc`) turning that inter-observer icc into an absolute
+  progression threshold: a nodule's diameter must change ~17% to clear reader-segmentation noise
+  vs ~70% for volume, the reproducibility case for tracking linear diameter over raw volume.
 - a **glcm texture family** (10 haralick, fixed 25 hu bins) plus a cohort-size sweep that settles
   whether its reproducibility is real signal or just underpowered.
 - **clustering-honest inference** for the multiple-nodules-per-patient problem: a patient-clustered
@@ -250,6 +253,28 @@ robust to inter-observer boundary disagreement (icc ~0.87), beating first-order 
 statistics, but the narrow hu range and fixed 25 hu bins leave ~half the glcm features structurally
 low-variance and redundant.* the +/-1 voxel proxy (0.44) is then the systematic boundary
 stress-test, the algorithmic worst case, not the clinical number.
+
+**from agreement to an absolute threshold: the repeatability coefficient.** icc is a relative
+score (0 to 1); planning progression tracking needs an *absolute* one, how much a number must
+change between scans to be real rather than measurement noise. so the pipeline also reports the
+**repeatability coefficient** (`reproducibility.repeatability_coefficient`, the bland-altman
+`rc = 1.96*sqrt(2)*sd_within ~ 2.77*sd_within`) and its unit-free `%rc` for the ratio-scale shape
+features, from the four-rater floored masks:
+
+| feature | %RC (change to be real) | ICC |
+|---|---|---|
+| EquivalentDiameter | **16.9%** | 0.99 |
+| VoxelVolume | **70.5%** | 0.97 |
+
+both are near-perfect by icc (~0.98) and both predict malignancy (auc ~0.92), yet a nodule's
+*diameter* has to change ~17% to clear inter-reader segmentation noise while its *volume* needs
+~70%, roughly 4x worse. the mechanism is clean: volume scales as diameter cubed, so the same
+boundary-delineation uncertainty maps to a several-times-larger relative change in volume. that is
+the reproducibility case, falling straight out of the inter-observer data, for why progression
+criteria (recist, lung-rads) track a linear diameter rather than a raw volume. one scope note:
+lidc has no repeat scans, so this is an *inter-observer* rc (the change clearing reader-segmentation
+variability), not a test-retest rc (scan-rescan), the reader-noise floor and the more optimistic of
+the two.
 
 **caveats on the inter-observer result** (flagged by a radiomics review):
 
