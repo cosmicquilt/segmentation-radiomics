@@ -118,7 +118,7 @@ def run_pipeline(cfg: dict) -> dict:
                           "cluster_robust": cluster_robust_logit(table[top], labels, groups),
                           "glmm": glmm_logit(table[top], labels, groups)}
     if len({s for s in scanners if s and s != "unknown"}) >= 2:
-        from .harmonization import batch_variance_explained, combat
+        from .harmonization import batch_variance_explained, combat, unimodality_report
         cols = [k for k in table if np.isfinite(table[k]).all()]
         mat = np.array([[table[k][i] for k in cols] for i in range(len(labels))], dtype=float)
         combat_report = {
@@ -126,6 +126,10 @@ def run_pipeline(cfg: dict) -> dict:
             "n_features": len(cols),
             "batch_var_before": batch_variance_explained(mat, scanners),
             "batch_var_after": batch_variance_explained(combat(mat, scanners), scanners),
+            # does combat's one-shift-per-batch assumption hold? flag features that are multimodal
+            # within a batch (mixed kernels/thickness, or solid vs subsolid) so their harmonization
+            # is reported as suspect rather than trusted silently
+            "unimodality": unimodality_report(mat, scanners, feature_names=cols),
         }
 
     # feature reproducibility under +/-1 voxel segmentation perturbation, the stability
@@ -244,6 +248,14 @@ def format_results(results: dict, top_k: int = 5) -> str:
         lines.append(f"combat harmonization across {cb['n_batches']} scanner batches "
                      f"({cb['n_features']} finite features): median batch-variance-explained "
                      f"{cb['batch_var_before']:.3f} -> {cb['batch_var_after']:.3f}")
+        um = cb.get("unimodality")
+        if um and um["n_suspect"]:
+            lines.append(f"  assumption check ({um['method']}): {um['n_suspect']}/{um['n_features']} "
+                         "features are multimodal within a batch, so their harmonization is suspect "
+                         f"(a single location-scale shift cannot fix it): {', '.join(um['suspect_features'][:5])}")
+        elif um:
+            lines.append(f"  assumption check ({um['method']}): all {um['n_features']} features "
+                         "unimodal within batch, the location-scale shift is appropriate")
 
     repro = results.get("reproducibility", {})
     floored = results.get("reproducibility_floored", {})

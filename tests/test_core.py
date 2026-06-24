@@ -141,6 +141,19 @@ def test_repeatability_coefficient_known_case():
     assert reproducibility.repeatability_coefficient(np.array([[5.0, 5.0], [7.0, 7.0]]))["rc"] == 0.0
 
 
+def test_unimodality_flags_multimodal_features():
+    rng = np.random.default_rng(0)
+    uni = rng.normal(0.0, 1.0, 400)                                        # unimodal
+    bim = np.concatenate([rng.normal(-3, 0.4, 200), rng.normal(3, 0.4, 200)])  # two clusters
+    assert harmonization.bimodality_coefficient(uni) < 5.0 / 9.0
+    assert harmonization.bimodality_coefficient(bim) > 5.0 / 9.0
+    # combat's unimodality check should flag only the bimodal feature as suspect
+    X = np.column_stack([uni, bim])
+    rep = harmonization.unimodality_report(X, np.array(["A"] * 400),
+                                           feature_names=["uni", "bim"], min_per_batch=20)
+    assert rep["n_suspect"] == 1 and rep["suspect_features"] == ["bim"]
+
+
 def test_feature_reproducibility_structure_and_ranking():
     cohort = make_cohort(n=12, shape=(32, 40, 40), seed=1)
     rows = reproducibility.feature_reproducibility(cohort, use_gt=True)

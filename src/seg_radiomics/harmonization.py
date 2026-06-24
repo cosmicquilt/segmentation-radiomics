@@ -92,3 +92,70 @@ def batch_variance_explained(features: np.ndarray, batches) -> float:
     ok = ss_total > 1e-12
     etas = ss_between[ok] / ss_total[ok]
     return float(np.median(etas)) if etas.size else float("nan")
+
+
+def bimodality_coefficient(x: np.ndarray) -> float:
+    """sarle's bimodality coefficient in [0, 1], a dependency-free unimodality screen
+
+    bc = (g1^2 + 1) / (g2 + 3*(n-1)^2 / ((n-2)(n-3))), g1 the sample skewness and g2 the excess
+    kurtosis. a normal sits near 0.33, a uniform at 5/9 ~ 0.555 (the conventional flag line), and
+    a clean bimodal mixture runs higher. the numpy fallback when the diptest package is absent.
+    nan for near-constant or tiny (< 4) samples
+    """
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    n = x.size
+    s = x.std()
+    if n < 4 or s < 1e-12:
+        return float("nan")
+    m = x - x.mean()
+    g1 = float((m**3).mean() / s**3)
+    g2 = float((m**4).mean() / s**4 - 3.0)
+    corr = 3.0 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+    return float((g1**2 + 1.0) / (g2 + corr))
+
+
+def unimodality_report(features: np.ndarray, batches, feature_names=None, min_per_batch=8,
+                       bc_threshold=5.0 / 9.0) -> dict:
+    """flag features whose within-batch distribution is multimodal, breaking combat's assumption
+
+    standard combat applies one additive + one multiplicative shift per batch, which assumes each
+    feature is unimodal within a batch. a feature that is bimodal within a batch (mixed
+    reconstruction kernels or slice thicknesses, or a solid vs subsolid biological mixture) cannot
+    be corrected by moving one mean and one variance, so its harmonization is suspect and gets
+    reported rather than trusted silently (the flag-don't-average rule used elsewhere in qc). uses
+    hartigan's dip test (the diptest package) for a p-value when installed, otherwise sarle's
+    bimodality coefficient. returns {method, n_features, n_suspect, suspect_features, bc_threshold}
+    """
+    X = np.asarray(features, float)
+    batches = np.asarray(batches)
+    p = X.shape[1]
+    names = list(feature_names) if feature_names is not None else [f"f{i}" for i in range(p)]
+    try:
+        from diptest import diptest as _dip
+        method = "hartigan_dip"
+    except Exception:
+        _dip = None
+        method = "bimodality_coefficient"
+    uniq = [bb for bb in np.unique(batches) if int((batches == bb).sum()) >= min_per_batch]
+    scores: dict[str, float] = {}
+    for j in range(p):
+        worst = 0.0
+        for bb in uniq:
+            x = X[batches == bb, j]
+            x = x[np.isfinite(x)]
+            if x.size < min_per_batch or x.std() < 1e-12:
+                continue
+            if _dip is not None:
+                pval = float(_dip(x)[1])
+                if pval < 0.05:                  # reject unimodality
+                    worst = max(worst, 1.0 - pval)
+            else:
+                bc = bimodality_coefficient(x)
+                if np.isfinite(bc) and bc > bc_threshold:
+                    worst = max(worst, bc)
+        if worst > 0.0:
+            scores[names[j]] = round(worst, 3)
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    return {"method": method, "n_features": p, "n_suspect": len(scores),
+            "suspect_features": ranked, "bc_threshold": round(bc_threshold, 3)}

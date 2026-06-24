@@ -317,7 +317,12 @@ before vs after** (one-way eta^2 per feature), the standard check that batch eff
 chance without erasing biological signal. on this 345-scan subset that meant cutting the median
 batch-variance-explained from **0.038 to 0.001** across its **6 scanner manufacturers**, a clean
 ~97% reduction, a genuine multi-scanner demonstration now that the larger download captured lidc's
-scanner diversity (a tighter, truly multi-center cohort would only sharpen it). it is the
+scanner diversity (a tighter, truly multi-center cohort would only sharpen it). combat applies one
+location-scale shift per batch, which assumes each feature is *unimodal within a batch*, so the step
+also runs an assumption check (`harmonization.unimodality_report`, hartigan's dip test when the
+diptest package is present, else sarle's bimodality coefficient) and **flags** any feature that is
+multimodal within a batch as a suspect harmonization rather than trusting it silently, the same
+flag-don't-average rule the qc layer uses. it is the
 acquisition-side companion to the segmentation
 reproducibility above, the same instability-characterization lens project 1 turned on
 reconstruction, now closing the loop on the third upstream source.
@@ -359,6 +364,36 @@ scripts/   smoke_test.py · make_figures.py · cohort_sweep.py · download_data.
 configs/   default.yaml · lidc.yaml
 tests/     test_core.py
 ```
+
+## future directions: stress-testing harmonization at scale
+
+the honest ceiling on part 2 is the label: lidc malignancy is a radiologist rating, so a feature
+can correlate with it partly because radiologists read size and appearance to assign it. the
+natural next step is a massive multi-center, **pathology-confirmed** cohort (nlst is the concrete
+one, multi-center screening ct with biopsy/resection truth for the cancers), which swaps the
+subjective label for a hard endpoint and turns the harmonization step from a demonstration into a
+real test. the experiment design carries straight over from what is here: a reproducibility
+pre-filter (multi-center icc / rc, only harmonize features that survive across scanners) ->
+combat -> residual batch-variance check -> **leave-one-center-out** predictive validation, where
+the claim that matters is whether harmonization shrinks the internal-to-external performance drop,
+not just the eta^2.
+
+the harmonization itself would go hierarchical. the regime that bites at scale is *many* centers
+with few scans each (the long tail of scanner models, kernels, protocols), which is where nested
+combat earns its keep but also where its order-dependence becomes a liability, so a single
+hierarchical location-scale model (random effects for center/scanner/protocol nested, the same
+machinery as the random-intercept glmm already here) is the cleaner target. the multimodal-feature
+case gets a deliberate decision tree, not a default: the unimodality flag above triggers it, then
+the multimodality is *attributed* before it is corrected. if the modes are **biological** (solid vs
+subsolid nodules are genuinely bimodal in density) they are preserved, since harmonizing across them
+erases a clinical subclass. if they trace to a **readable dicom tag** (reconstruction kernel or
+slice thickness, which drive ct texture far more than manufacturer) that tag is added as a nested
+batch, more interpretable than a mixture model rediscovering it. only for **genuinely unlabeled**
+multimodality is gmm-combat the right fallback. two caveats keep it honest: at multi-center scale
+batch and biology entangle (a center that scans sicker patients has scanner correlated with the
+endpoint), so combat must preserve the outcome covariate or it removes real signal; and pathology
+confirmation needs a biopsy, so the labeled set is enriched for suspicious nodules, trading the
+subjective-label circularity for a verification bias worth stating plainly.
 
 ## status
 
