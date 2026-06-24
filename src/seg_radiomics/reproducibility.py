@@ -73,6 +73,30 @@ def ccc_components(x: np.ndarray, y: np.ndarray) -> dict:
             "loc_shift": u, "scale_shift": v}
 
 
+def repeatability_coefficient(mat: np.ndarray) -> dict:
+    """smallest absolute feature change that exceeds measurement noise at 95%, and as a percent
+
+    the clinical complement to icc: icc is a relative 0..1 score, the repeatability coefficient
+    is an absolute physical threshold. from the within-case spread of the repeated measurements
+    (here each nodule's rater masks, or its erode/dilate perturbations) the within-subject sd is
+    sqrt of the one-way anova within mean square, and rc = 1.96*sqrt(2)*sd_w ~ 2.77*sd_w
+    (bland-altman). a real change between scans has to exceed rc to clear measurement noise, which
+    is exactly the disease-progression question. pct_rc = 100*rc/|mean| is unit-free but only
+    meaningful for ratio-scale features (positive, true zero), so it is nan-guarded near zero.
+    mat is (n_cases, k_measurements)
+    """
+    mat = np.asarray(mat, float)
+    n, k = mat.shape
+    if n < 2 or k < 2:
+        return {"rc": float("nan"), "pct_rc": float("nan"), "sd_within": float("nan")}
+    msw = ((mat - mat.mean(axis=1, keepdims=True)) ** 2).sum() / (n * (k - 1))
+    sd_w = float(np.sqrt(msw))
+    rc = float(1.96 * np.sqrt(2.0) * sd_w)
+    grand = abs(float(mat.mean()))
+    pct_rc = float(100.0 * rc / grand) if grand > 1e-9 else float("nan")
+    return {"rc": rc, "pct_rc": pct_rc, "sd_within": sd_w}
+
+
 def icc_2_1(data: np.ndarray) -> float:
     """icc(2,1) two-way random effects absolute agreement single measurement
 
@@ -147,6 +171,7 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
         within = (mat - mat.mean(axis=1, keepdims=True)).std()
         snr = float(between / (within + 1e-12))
         comp = ccc_components(mat[:, 0], mat[:, 1:].mean(1))  # reference vs mean perturbed
+        rep = repeatability_coefficient(mat)          # absolute change exceeding perturbation noise
         rows.append({
             "feature": name,
             "fclass": feature_class(name),
@@ -154,6 +179,10 @@ def feature_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), use_gt=True, min_vo
             "ccc": comp["ccc"],
             "ccc_precision": comp["precision"],       # pearson, the noise term
             "ccc_accuracy": comp["accuracy"],         # bias-correction c_b, the systematic term
+            "ccc_loc_shift": comp["loc_shift"],       # u: mean offset (0 = matched)
+            "ccc_scale_shift": comp["scale_shift"],   # v: spread ratio (1 = matched, >1 = compressed)
+            "rc": rep["rc"],                          # repeatability coefficient (absolute)
+            "pct_rc": rep["pct_rc"],                  # rc as % of the mean (ratio-scale features)
             "snr": snr,                               # between-case / within-case spread
             "low_signal": bool(snr < min_snr),        # near-constant across cases, icc untrustworthy
         })
@@ -252,10 +281,13 @@ def interobserver_reproducibility(cohort, spacing=(1.0, 1.0, 1.0), n_raters=4, h
         between = mat[:, 0].std()
         within = (mat - mat.mean(axis=1, keepdims=True)).std()
         snr = float(between / (within + 1e-12))
+        rep = repeatability_coefficient(mat)        # absolute change exceeding inter-observer noise
         rows.append({
             "feature": name,
             "fclass": feature_class(name),
             "icc": icc_2_1(mat),                    # agreement across the real radiologist masks
+            "rc": rep["rc"],                        # inter-observer repeatability coefficient (absolute)
+            "pct_rc": rep["pct_rc"],                # rc as % of the mean (ratio-scale features only)
             "snr": snr,
             "low_signal": bool(snr < min_snr),
         })

@@ -130,6 +130,17 @@ def test_ccc_components_separate_noise_from_bias():
     assert shift["precision"] == pytest.approx(1.0, abs=1e-9) and shift["accuracy"] < 0.9  # failed by bias
 
 
+def test_repeatability_coefficient_known_case():
+    # three subjects, each measured twice with a +/-1 within-subject spread
+    mat = np.array([[9.0, 11.0], [19.0, 21.0], [29.0, 31.0]])
+    rep = reproducibility.repeatability_coefficient(mat)
+    # sd_within = sqrt(2), rc = 1.96*sqrt(2)*sqrt(2) = 3.92, mean 20 -> %rc = 19.6
+    assert rep["rc"] == pytest.approx(1.96 * 2.0, abs=1e-6)
+    assert rep["pct_rc"] == pytest.approx(100.0 * 1.96 * 2.0 / 20.0, abs=1e-6)
+    # perfect repeatability -> rc 0
+    assert reproducibility.repeatability_coefficient(np.array([[5.0, 5.0], [7.0, 7.0]]))["rc"] == 0.0
+
+
 def test_feature_reproducibility_structure_and_ranking():
     cohort = make_cohort(n=12, shape=(32, 40, 40), seed=1)
     rows = reproducibility.feature_reproducibility(cohort, use_gt=True)

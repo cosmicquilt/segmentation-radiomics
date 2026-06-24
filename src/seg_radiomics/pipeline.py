@@ -145,12 +145,20 @@ def run_pipeline(cfg: dict) -> dict:
     interobserver = interobserver_floored = None
     io_n = 0
     io_dice_raw = io_dice_floored = None
+    io_rows_floored = clinical_rc = None
     if any(len(c.get("rater_masks") or []) >= n_raters for c in cohort):
         io_rows, io_n = interobserver_reproducibility(cohort, spacing=default_spacing, n_raters=n_raters)
         io_rows_fl, _ = interobserver_reproducibility(cohort, spacing=default_spacing,
                                                       n_raters=n_raters, hu_floor=hu_floor)
+        io_rows_floored = io_rows_fl
         interobserver = summarize_reproducibility(io_rows, threshold=0.75)
         interobserver_floored = summarize_reproducibility(io_rows_fl, threshold=0.75)
+        # clinical translation: the inter-observer repeatability coefficient (an absolute change
+        # threshold) for the ratio-scale shape features, where %rc is interpretable as "size must
+        # change by > x% between scans to exceed reader noise" (the progression-tracking question)
+        clinical_rc = {r["feature"]: {"rc": r["rc"], "pct_rc": r["pct_rc"], "icc": r["icc"]}
+                       for r in io_rows_fl
+                       if r["fclass"] == "shape" and np.isfinite(r.get("pct_rc", float("nan")))}
         # degeneracy check: if the floor collapses the contours (dice -> 1.0), the floored icc
         # is tautological (identical masks -> identical features) not a real stability gain
         io_dice_raw, _ = rater_mask_agreement(cohort, n_raters=n_raters)
@@ -182,6 +190,8 @@ def run_pipeline(cfg: dict) -> dict:
         "n_raters": n_raters,
         "interobserver": interobserver,
         "interobserver_floored": interobserver_floored,
+        "interobserver_per_feature_floored": io_rows_floored,
+        "clinical_rc": clinical_rc,
         "interobserver_n_nodules": io_n,
         "interobserver_dice_raw": io_dice_raw,
         "interobserver_dice_floored": io_dice_floored,
@@ -275,6 +285,16 @@ def format_results(results: dict, top_k: int = 5) -> str:
                        "contours stay distinct, the floored ICC is a real stability gain")
             lines.append(f"rater mask agreement (mean pairwise Dice across {k}): "
                          f"raw {dr:.3f} -> floored {df:.3f}  ({verdict})")
+
+    crc = results.get("clinical_rc") or {}
+    if crc:
+        lines += ["", "clinical translation: inter-observer repeatability coefficient (smallest change "
+                  "that clears reader-segmentation noise at 95%, floored shape features):",
+                  "| feature | RC (absolute) | %RC | ICC |", "|---|---|---|---|"]
+        for name, st in sorted(crc.items(), key=lambda kv: kv[1]["pct_rc"]):
+            lines.append(f"| {name} | {st['rc']:.4g} | {st['pct_rc']:.1f}% | {st['icc']:.3f} |")
+        lines.append("  a scan-to-scan change below %RC is within reader variability, not real "
+                     "progression (inter-observer, not test-retest)")
 
     vc = results.get("volume_confound", {})
     flagged = [n for n, st in vc.items() if st["volume_proxy"]]
